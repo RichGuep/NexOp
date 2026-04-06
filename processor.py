@@ -6,9 +6,14 @@ import json
 import urllib3
 import time as time_lib
 
+# Desactivar advertencias de certificados (necesario para conexiones por túnel/VPN)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-TOKEN_URL = "http://10.0.3.138:8080/ws/oauth/token"
+# --- CONFIGURACIÓN DE URLS (NGROK TUNNEL) ---
+# Esta es la URL que generaste en tu terminal negra
+BASE_TUNNEL_URL = "https://cotemporaneous-lory-semitruthfully.ngrok-free.dev"
+
+TOKEN_URL = f"{BASE_TUNNEL_URL}/ws/oauth/token"
 LOG_PATH = "trazabilidad_novedades.csv"
 USERS_FILE = "usuarios.json"
 ADMIN_EMAIL = "richard.guevara@greenmovil.com.co"
@@ -41,6 +46,7 @@ def obtener_token():
     auth_app = ('rigelWS', 'rigelWS2021')
     data_auth = {'username': 'nospina', 'password': 'ospina2023', 'grant_type': 'password'}
     try:
+        # Petición a través del túnel
         r = requests.post(TOKEN_URL, data=data_auth, auth=auth_app, timeout=15, verify=False)
         return r.json().get('access_token') if r.status_code == 200 else None
     except: return None
@@ -59,7 +65,9 @@ def cargar_datos_api():
     token = obtener_token()
     if not token: return None
     fecha_hoy = datetime.now().strftime('%Y-%m-%d')
-    url = f"http://10.0.3.138:8080/ws/reportes/semanaActual/{fecha_hoy}/{fecha_hoy}/0"
+    # URL de reportes actualizada con el túnel
+    url = f"{BASE_TUNNEL_URL}/ws/reportes/semanaActual/{fecha_hoy}/{fecha_hoy}/0"
+    
     try:
         r = requests.get(url, headers={'Authorization': f'Bearer {token}'}, timeout=25, verify=False)
         raw_data = r.json()
