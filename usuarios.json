@@ -1,0 +1,20 @@
+{
+    "richard.guevara@greenmovil.com.co": {
+        "nombre": "Richard Guevara",
+        "cargo": "Administrador de Operaciones",
+        "pw": "admin2026",
+        "rol": "admin"
+    },
+    "julian.porras@greenmovil.com.co": {
+        "nombre": "Julian Porras",
+        "cargo": "Auxiliar de Ejecucion de la operacion",
+        "pw": "1234",
+        "rol": "auxiliar"
+    },
+    "judith.alvarado@oagreenmovil.com.co": {
+        "nombre": "Judith Alvarado",
+        "cargo": "Auxiliar de Ejecucion de la Operacion",
+        "pw": "12345",
+        "rol": "auxiliar"
+    }
+}
