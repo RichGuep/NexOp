@@ -6,11 +6,11 @@ import json
 import urllib3
 import time as time_lib
 
-# Desactivar advertencias de certificados (necesario para conexiones por túnel/VPN)
+# Desactivar advertencias de certificados SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- CONFIGURACIÓN DE URLS (NGROK TUNNEL) ---
-# Esta es la URL que generaste en tu terminal negra
+# Asegúrate de que esta URL coincida con la que tienes abierta en tu terminal negra
 BASE_TUNNEL_URL = "https://cotemporaneous-lory-semitruthfully.ngrok-free.dev"
 
 TOKEN_URL = f"{BASE_TUNNEL_URL}/ws/oauth/token"
@@ -24,6 +24,13 @@ MAPEO_PIR = {
     "Recodo": ["A003", "A332"],
     "Brisas 1": ["L331", "B314", "H318", "L325"],
     "Brisas 2": ["L329", "L312", "K324"]
+}
+
+# --- HEADER CRÍTICO PARA SALTAR EL MURO DE NGROK ---
+# Este header es el que permite que la App de Streamlit funcione en la nube
+HEADERS_BYPASS = {
+    "ngrok-skip-browser-warning": "true",
+    "Accept": "application/json"
 }
 
 def inicializar_sistema():
@@ -46,8 +53,8 @@ def obtener_token():
     auth_app = ('rigelWS', 'rigelWS2021')
     data_auth = {'username': 'nospina', 'password': 'ospina2023', 'grant_type': 'password'}
     try:
-        # Petición a través del túnel
-        r = requests.post(TOKEN_URL, data=data_auth, auth=auth_app, timeout=15, verify=False)
+        # Enviamos el header de bypass en la petición del token
+        r = requests.post(TOKEN_URL, data=data_auth, auth=auth_app, timeout=15, verify=False, headers=HEADERS_BYPASS)
         return r.json().get('access_token') if r.status_code == 200 else None
     except: return None
 
@@ -65,22 +72,27 @@ def cargar_datos_api():
     token = obtener_token()
     if not token: return None
     fecha_hoy = datetime.now().strftime('%Y-%m-%d')
-    # URL de reportes actualizada con el túnel
     url = f"{BASE_TUNNEL_URL}/ws/reportes/semanaActual/{fecha_hoy}/{fecha_hoy}/0"
     
     try:
-        r = requests.get(url, headers={'Authorization': f'Bearer {token}'}, timeout=25, verify=False)
+        # Combinamos el Token de Rigel con el Bypass de Ngrok
+        headers_final = {
+            **HEADERS_BYPASS,
+            'Authorization': f'Bearer {token}'
+        }
+        r = requests.get(url, headers=headers_final, timeout=25, verify=False)
         raw_data = r.json()
         if not raw_data: return pd.DataFrame()
         
         df = pd.DataFrame(raw_data)
         
-        # --- VALIDACIÓN DIRECTA DE COLUMNA TABLA ---
+        # Validación de columna tabla
         if 'tabla' in df.columns:
             df['tabla'] = df['tabla'].astype(str).replace('None', 'N/A')
         else:
             df['tabla'] = "N/A"
 
+        # Procesamiento de rutas y puntos PIR
         df['rutaLimpia'] = df['tipoTarea'].astype(str).apply(lambda x: x.split('_')[0].split(' ')[0].strip()[:5])
         df['hora_dt'] = pd.to_datetime(df['timeOrigin'], format='%H:%M:%S', errors='coerce').dt.time
         df['km'] = pd.to_numeric(df['km'], errors='coerce').fillna(0) / 1000
@@ -89,6 +101,7 @@ def cargar_datos_api():
         df['bus_real'] = df['codigoBus']; df['ope_real'] = df['nombre']
         df['estado_gestion'] = "PROGRAMADO"; df['soc_salida'] = "---"; df['km_ejecutado'] = 0.0; df['soc_num'] = 0
         
+        # Cruce con novedades registradas localmente (CSV)
         if os.path.exists(LOG_PATH):
             try:
                 df_log = pd.read_csv(LOG_PATH, sep=';', on_bad_lines='skip')
