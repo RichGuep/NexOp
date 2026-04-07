@@ -6,11 +6,10 @@ import json
 import urllib3
 import time as time_lib
 
-# Desactivar advertencias de certificados SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- CONFIGURACIÓN DE URLS (NGROK TUNNEL) ---
-# Asegúrate de que esta URL coincida con la que tienes abierta en tu terminal negra
+# Asegúrate de que esta URL sea la misma que aparece en tu terminal de Ngrok
 BASE_TUNNEL_URL = "https://cotemporaneous-lory-semitruthfully.ngrok-free.dev"
 
 TOKEN_URL = f"{BASE_TUNNEL_URL}/ws/oauth/token"
@@ -26,8 +25,7 @@ MAPEO_PIR = {
     "Brisas 2": ["L329", "L312", "K324"]
 }
 
-# --- HEADER CRÍTICO PARA SALTAR EL MURO DE NGROK ---
-# Este header es el que permite que la App de Streamlit funcione en la nube
+# Bypass para evitar la pantalla de advertencia de Ngrok
 HEADERS_BYPASS = {
     "ngrok-skip-browser-warning": "true",
     "Accept": "application/json"
@@ -43,30 +41,13 @@ def obtener_usuarios():
     if not os.path.exists(USERS_FILE): inicializar_sistema()
     with open(USERS_FILE, 'r') as f: return json.load(f)
 
-def guardar_usuario(correo, nombre, cargo, pw):
-    db = obtener_usuarios()
-    rol = "pro" if any(x in cargo for x in ["Profesional", "Administrador"]) else "auxiliar"
-    db[correo.lower().strip()] = {"nombre": nombre, "cargo": cargo, "pw": pw, "rol": rol}
-    with open(USERS_FILE, 'w') as f: json.dump(db, f, indent=4)
-
 def obtener_token():
     auth_app = ('rigelWS', 'rigelWS2021')
     data_auth = {'username': 'nospina', 'password': 'ospina2023', 'grant_type': 'password'}
     try:
-        # Enviamos el header de bypass en la petición del token
         r = requests.post(TOKEN_URL, data=data_auth, auth=auth_app, timeout=15, verify=False, headers=HEADERS_BYPASS)
         return r.json().get('access_token') if r.status_code == 200 else None
     except: return None
-
-def registrar_novedad(tipo, datos, nombre_usuario):
-    if os.path.exists(LOG_PATH):
-        fecha_arch = datetime.fromtimestamp(os.path.getmtime(LOG_PATH)).date()
-        if datetime.now().date() > fecha_arch:
-            os.rename(LOG_PATH, f"historico/novedades_{fecha_arch}.csv")
-    datos['fecha_registro'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    datos['tipo_evento'] = tipo
-    datos['gestionado_por'] = nombre_usuario
-    pd.DataFrame([datos]).to_csv(LOG_PATH, mode='a', index=False, header=not os.path.exists(LOG_PATH), sep=';')
 
 def cargar_datos_api():
     token = obtener_token()
@@ -75,24 +56,17 @@ def cargar_datos_api():
     url = f"{BASE_TUNNEL_URL}/ws/reportes/semanaActual/{fecha_hoy}/{fecha_hoy}/0"
     
     try:
-        # Combinamos el Token de Rigel con el Bypass de Ngrok
-        headers_final = {
-            **HEADERS_BYPASS,
-            'Authorization': f'Bearer {token}'
-        }
+        headers_final = {**HEADERS_BYPASS, 'Authorization': f'Bearer {token}'}
         r = requests.get(url, headers=headers_final, timeout=25, verify=False)
         raw_data = r.json()
         if not raw_data: return pd.DataFrame()
         
         df = pd.DataFrame(raw_data)
-        
-        # Validación de columna tabla
         if 'tabla' in df.columns:
             df['tabla'] = df['tabla'].astype(str).replace('None', 'N/A')
         else:
             df['tabla'] = "N/A"
 
-        # Procesamiento de rutas y puntos PIR
         df['rutaLimpia'] = df['tipoTarea'].astype(str).apply(lambda x: x.split('_')[0].split(' ')[0].strip()[:5])
         df['hora_dt'] = pd.to_datetime(df['timeOrigin'], format='%H:%M:%S', errors='coerce').dt.time
         df['km'] = pd.to_numeric(df['km'], errors='coerce').fillna(0) / 1000
@@ -101,24 +75,12 @@ def cargar_datos_api():
         df['bus_real'] = df['codigoBus']; df['ope_real'] = df['nombre']
         df['estado_gestion'] = "PROGRAMADO"; df['soc_salida'] = "---"; df['km_ejecutado'] = 0.0; df['soc_num'] = 0
         
-        # Cruce con novedades registradas localmente (CSV)
-        if os.path.exists(LOG_PATH):
-            try:
-                df_log = pd.read_csv(LOG_PATH, sep=';', on_bad_lines='skip')
-                for _, row in df_log.iterrows():
-                    sid = str(row['servbus'])
-                    mask = df['servbus'] == sid
-                    if any(mask):
-                        quien, tipo_e = row.get('gestionado_por', 'Sistema'), row.get('tipo_evento', 'EVENTO')
-                        if tipo_e in ["DESPACHO", "RETOMA"]:
-                            df.loc[mask, 'estado_gestion'] = f"✅ {tipo_e} ({quien})"
-                            df.loc[mask, 'bus_real'] = row.get('bus_nue')
-                            df.loc[mask, 'ope_real'] = row.get('ope_nue')
-                            df.loc[mask, 'soc_salida'] = str(row.get('soc', '100%'))
-                            df.loc[mask, 'km_ejecutado'] = df.loc[mask, 'km']
-                            df.loc[mask, 'soc_num'] = row.get('soc_num', 100)
-                        elif tipo_e == "ELIMINACION":
-                            df.loc[mask, 'estado_gestion'] = f"❌ ELIMINADO ({quien})"
-            except: pass
         return df
     except: return None
+
+def registrar_novedad(tipo, datos, nombre_usuario):
+    # Lógica de guardado en CSV (Streamlit Cloud creará este archivo en su servidor temporal)
+    datos['fecha_registro'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    datos['tipo_evento'] = tipo
+    datos['gestionado_por'] = nombre_usuario
+    pd.DataFrame([datos]).to_csv(LOG_PATH, mode='a', index=False, header=not os.path.exists(LOG_PATH), sep=';')
