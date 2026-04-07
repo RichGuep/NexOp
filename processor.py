@@ -8,8 +8,8 @@ import time as time_lib
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- CONFIGURACIÓN DE URLS (NGROK TUNNEL) ---
-# Asegúrate de que esta URL sea la misma que aparece en tu terminal de Ngrok
+# --- REEMPLAZA ESTA URL CON LA QUE VEAS EN TU TERMINAL NEGRA (NGROK) ---
+# Debe empezar con https:// y terminar en .ngrok-free.dev o .app
 BASE_TUNNEL_URL = "https://cotemporaneous-lory-semitruthfully.ngrok-free.dev"
 
 TOKEN_URL = f"{BASE_TUNNEL_URL}/ws/oauth/token"
@@ -25,7 +25,6 @@ MAPEO_PIR = {
     "Brisas 2": ["L329", "L312", "K324"]
 }
 
-# Bypass para evitar la pantalla de advertencia de Ngrok
 HEADERS_BYPASS = {
     "ngrok-skip-browser-warning": "true",
     "Accept": "application/json"
@@ -79,7 +78,6 @@ def cargar_datos_api():
     except: return None
 
 def registrar_novedad(tipo, datos, nombre_usuario):
-    # Lógica de guardado en CSV (Streamlit Cloud creará este archivo en su servidor temporal)
     datos['fecha_registro'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     datos['tipo_evento'] = tipo
     datos['gestionado_por'] = nombre_usuario
