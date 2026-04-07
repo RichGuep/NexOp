@@ -1,14 +1,17 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 import processor
 
 APP_NAME = "NexOp | Green Móvil"
 st.set_page_config(page_title=APP_NAME, layout="wide", page_icon="⚡")
 
-try: processor.inicializar_sistema()
-except: pass
+# Intentar inicializar conexión con Google Sheets
+try:
+    processor.inicializar_gsheet()
+except Exception as e:
+    st.error(f"Error al conectar con Google Sheets: {e}")
 
 # --- ESTILO CENTURY GOTHIC ---
 st.markdown("""
@@ -35,7 +38,7 @@ if not st.session_state.auth:
         with st.container(border=True):
             u_in = st.text_input("Correo").lower().strip()
             p_in = st.text_input("Contraseña", type="password")
-            if st.button("INGRESAR", width='stretch'):
+            if st.button("INGRESAR", use_container_width=True):
                 users = processor.obtener_usuarios()
                 if u_in in users and users[u_in]["pw"] == p_in:
                     st.session_state.auth = True
@@ -47,97 +50,117 @@ if not st.session_state.auth:
 # --- DIALOG GESTIÓN ---
 @st.dialog("🛠️ Gestión de Servicio")
 def ventana_gestion(s_data):
-    st.markdown(f"### Servicio: {s_data['timeOrigin']} | {s_data['rutaLimpia']} | Tabla: {s_data['tabla']}")
+    st.markdown(f"### Servicio: {s_data['timeOrigin']} | {s_data['ruta']} | Tabla: {s_data['tabla']}")
     with st.form("f_gestion"):
         c1, c2 = st.columns(2)
-        with c1: st.info(f"**Rigel**\n\nBus: {s_data['codigoBus']}\n\nOpe: {s_data['nombre']}")
+        # Mostramos lo programado originalmente
+        c1.info(f"**Programado**\n\nBus: {s_data['bus_prog']}\n\nOpe: {s_data['ope_prog']}")
         with c2:
-            bn = st.text_input("Bus Real:", value=s_data['bus_real'])
-            on = st.text_input("Ope Real:", value=s_data['ope_real'])
+            bn = st.text_input("Bus Real:", value=s_data['bus_prog'])
+            on = st.text_input("Ope Real:", value=s_data['ope_prog'])
         st.divider()
         c_soc, c_tipo, c_f = st.columns(3)
         with c_soc: soc = st.number_input("SOC%", 0, 100, 100)
         with c_tipo: tip = st.radio("Acción:", ["Normal", "RETOMA"], horizontal=True)
         with c_f: fail = st.selectbox("Incumplimiento:", ["NO", "Falta Bus", "Falta Ope", "Varado", "Congestión"])
-        if st.form_submit_button("✅ GUARDAR REGISTRO", width='stretch'):
+        
+        if st.form_submit_button("✅ GUARDAR REGISTRO EN NUBE", use_container_width=True):
             u_nom = st.session_state.user_info["nombre"]
-            if fail != "NO": processor.registrar_novedad("ELIMINACION", {"servbus": s_data['servbus'], "motivo": fail}, u_nom)
-            else:
-                ev = "RETOMA" if tip == "RETOMA" else "DESPACHO"
-                processor.registrar_novedad(ev, {"servbus": s_data['servbus'], "bus_nue": bn, "ope_nue": on, "soc": f"{soc}%"}, u_nom)
+            estado = "ELIMINADO" if fail != "NO" else ("RETOMA" if tip == "RETOMA" else "DESPACHO")
+            
+            # Guardamos en Google Sheets
+            datos_nuevos = {
+                "servbus": s_data['servbus'],
+                "bus_real": bn,
+                "ope_real": on,
+                "soc": f"{soc}%",
+                "estado": estado
+            }
+            processor.registrar_ejecucion_gsheet(datos_nuevos, u_nom)
+            st.success("Registro guardado en NexOp_DB")
             st.rerun()
 
 # --- SIDEBAR & FILTROS ---
 st.sidebar.markdown(f"<h2 style='color:#1a531f; text-align:center;'>Green Móvil</h2>", unsafe_allow_html=True)
 st.sidebar.write(f"👤 **{st.session_state.user_info['nombre']}**")
-if st.sidebar.button("Cerrar Sesión", width='stretch'):
+if st.sidebar.button("Cerrar Sesión", use_container_width=True):
     st.session_state.auth = False
     st.rerun()
 
-df = processor.cargar_datos_api()
+# --- CARGA DE DATOS DESDE GOOGLE SHEETS ---
+df = processor.cargar_datos_pantalla()
 
-if df is not None:
+if not df.empty:
     st.sidebar.divider()
     st.sidebar.markdown("🔍 **Búsqueda Avanzada**")
     
     pir_s = st.sidebar.selectbox("🏠 Punto PIR:", ["Todas"] + list(processor.MAPEO_PIR.keys()))
-    
-    rutas_op = ["Todas"] + (sorted(df['rutaLimpia'].unique().tolist()) if pir_s == "Todas" else processor.MAPEO_PIR[pir_s])
+    rutas_op = ["Todas"] + (sorted(df['ruta'].unique().tolist()) if pir_s == "Todas" else processor.MAPEO_PIR[pir_s])
     ruta_s = st.sidebar.selectbox("🎯 Ruta:", rutas_op)
     
     tabla_s = st.sidebar.text_input("📋 Nro Tabla:", placeholder="Ej: 15")
-    tm_s = st.sidebar.text_input("🔢 Código TM:", placeholder="Ej: 631400")
     bus_s = st.sidebar.text_input("🚌 Bus (Móvil):", placeholder="Ej: Z63-4115")
-    turno = st.sidebar.radio("⏰ Turno:", ["Todas", "06:00-14:00", "14:00-22:00"], horizontal=True)
 
     # --- LÓGICA DE FILTRADO ---
     df_f = df.copy()
     if pir_s != "Todas": df_f = df_f[df_f['punto_pir'] == pir_s]
-    if ruta_s != "Todas": df_f = df_f[df_f['rutaLimpia'] == ruta_s]
+    if ruta_s != "Todas": df_f = df_f[df_f['ruta'] == ruta_s]
     if tabla_s: df_f = df_f[df_f['tabla'].astype(str).str.contains(tabla_s)]
-    if tm_s: df_f = df_f[df_f['codigoTm'].astype(str).str.contains(tm_s)]
-    if bus_s: df_f = df_f[df_f['bus_real'].astype(str).str.contains(bus_s, case=False) | df_f['codigoBus'].astype(str).str.contains(bus_s, case=False)]
-    if turno != "Todas":
-        h_i, h_f = (time(6,0), time(14,0)) if "06" in turno else (time(14,0), time(22,0))
-        df_f = df_f[(df_f['hora_dt'] >= h_i) & (df_f['hora_dt'] <= h_f)]
+    if bus_s: df_f = df_f[df_f['bus_prog'].astype(str).str.contains(bus_s, case=False)]
 
     # --- TABS ---
     cargo = st.session_state.user_info['cargo']
-    rol = st.session_state.user_info.get('rol', 'auxiliar')
-    
-    tabs_nombres = ["📊 DASHBOARD"]
-    if any(x in cargo for x in ["Auxiliar", "Profesional", "Administrador"]): tabs_nombres.append("🚀 PIR")
-    if any(x in cargo for x in ["Tecnico", "Profesional", "Administrador"]): tabs_nombres.append("📋 CONTROL")
-    if any(x in cargo for x in ["Profesional", "Administrador"]): tabs_nombres.append("👤 ADMIN")
-    
+    tabs_nombres = ["📊 DASHBOARD", "🚀 PIR", "📋 CONTROL", "👤 ADMIN"]
     tabs = st.tabs(tabs_nombres)
 
     for i, t_name in enumerate(tabs_nombres):
         with tabs[i]:
             if t_name == "📊 DASHBOARD":
                 st.markdown("<h3 style='color:#1a531f;'>Métricas de Operación</h3>", unsafe_allow_html=True)
-                m1, m2, m3 = st.columns(3)
-                kp, ke = df_f['km'].sum(), df_f['km_ejecutado'].sum()
-                m1.metric("ICK", f"{(ke/kp*100 if kp>0 else 0):.1f}%")
-                m2.metric("SERVICIOS", f"{len(df_f[df_f['estado_gestion'].str.contains('✅', na=False)])} / {len(df_f)}")
-                m3.metric("SOC PROMEDIO", f"{df_f[df_f['soc_num'] > 0]['soc_num'].mean():.1f}%")
-                st.plotly_chart(px.bar(df_f.groupby('punto_pir').agg({'km':'sum','km_ejecutado':'sum'}).reset_index(), x='punto_pir', y='km', text_auto=True), width='stretch')
+                m1, m2 = st.columns(2)
+                m1.metric("TOTAL SERVICIOS", len(df_f))
+                m2.metric("PUNTOS PIR", len(df_f['punto_pir'].unique()))
+                st.plotly_chart(px.bar(df_f.groupby('ruta').size().reset_index(name='servicios'), x='ruta', y='servicios', title="Servicios por Ruta", color_discrete_sequence=['#1a531f']), use_container_width=True)
 
             elif t_name == "🚀 PIR":
                 st.markdown("<h3 style='color:#1a531f;'>Gestión Operativa</h3>", unsafe_allow_html=True)
-                cols_pir = ['timeOrigin', 'bus_real', 'ope_real', 'codigoTm', 'tabla', 'estado_gestion']
-                t_p = st.dataframe(df_f[cols_pir], width='stretch', hide_index=True, on_select="rerun", selection_mode="single-row")
+                cols_pir = ['timeOrigin', 'ruta', 'tabla', 'bus_prog', 'ope_prog']
+                t_p = st.dataframe(df_f[cols_pir], use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
                 if t_p.selection.rows: ventana_gestion(df_f.iloc[t_p.selection.rows[0]])
 
             elif t_name == "📋 CONTROL":
-                cols_control = ['timeOrigin', 'rutaLimpia', 'codigoBus', 'tabla', 'bus_real', 'nombre', 'ope_real', 'estado_gestion', 'soc_salida']
-                st.dataframe(df_f[cols_control], width='stretch', hide_index=True)
+                st.markdown("<h3 style='color:#1a531f;'>Reporte General</h3>", unsafe_allow_html=True)
+                st.dataframe(df_f, use_container_width=True, hide_index=True)
 
             elif t_name == "👤 ADMIN":
-                with st.form("adm"):
-                    c1, c2 = st.columns(2); m, n = c1.text_input("Correo"), c2.text_input("Nombre")
-                    car = c1.selectbox("Cargo", ["Auxiliar de Ejecucion de la Operacion", "Tecnicos de Ejecución de la operación", "Profesional de Ejecución de la operacion", "Administrador de Operaciones"])
-                    p = c2.text_input("Contraseña")
-                    if st.form_submit_button("CREAR", width='stretch'): processor.guardar_usuario(m,n,car,p); st.success("Creado")
+                st.header("⚙️ Panel de Administración")
+                
+                # SECCIÓN DE SINCRONIZACIÓN SEMANAL
+                with st.expander("📅 Carga de Programación desde Rigel (Semanas completas)", expanded=True):
+                    st.warning("Esta acción descargará los datos de Rigel y los guardará permanentemente en Google Sheets.")
+                    c1, c2 = st.columns(2)
+                    f_inicio = c1.date_input("Desde:", datetime.now())
+                    f_fin = c2.date_input("Hasta:", datetime.now() + timedelta(days=7))
+                    
+                    if st.button("🚀 INICIAR DESCARGA A NUBE", use_container_width=True):
+                        with st.spinner("Conectando con Rigel..."):
+                            exito = processor.sincronizar_rango_rigel(str(f_inicio), str(f_fin))
+                            if exito:
+                                st.success("Sincronización Completa. Datos guardados en NexOp_DB")
+                                st.rerun()
+                            else:
+                                st.error("Error. Revisa que el Túnel Ngrok y la VPN estén activos.")
+
+                st.divider()
+                with st.form("adm_user"):
+                    st.subheader("Crear Nuevo Usuario")
+                    c1, c2 = st.columns(2)
+                    m = c1.text_input("Correo")
+                    n = c2.text_input("Nombre Completo")
+                    car = c1.selectbox("Cargo", ["Auxiliar", "Tecnico", "Profesional", "Administrador"])
+                    p = c2.text_input("Contraseña", type="password")
+                    if st.form_submit_button("CREAR USUARIO", use_container_width=True):
+                        processor.guardar_usuario(m,n,car,p)
+                        st.success("Usuario creado exitosamente")
 else:
-    st.error("⚠️ Sin conexión a Rigel.")
+    st.info("👋 ¡Bienvenido! No hay datos cargados para hoy. Ve a la pestaña ADMIN para sincronizar con Rigel.")
