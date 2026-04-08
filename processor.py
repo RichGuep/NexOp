@@ -23,28 +23,45 @@ MAPEO_PIR = {
 HEADERS_BYPASS = {"ngrok-skip-browser-warning": "true", "Accept": "application/json"}
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- GESTIÓN DE USUARIOS Y ROLES ---
+# --- GESTIÓN DE USUARIOS ---
 def obtener_usuarios():
     try:
         df_user = conn.read(worksheet="USUARIOS", ttl=0)
         if df_user.empty:
             return {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "admin2026", "rol": "admin"}}
-        return df_user.set_index('correo').to_dict('index')
+        
+        # Convertir a diccionario
+        users_dict = df_user.set_index('correo').to_dict('index')
+        
+        # SUPER-ADMIN FORZADO: Asegura que Richard siempre sea admin
+        if ADMIN_EMAIL in users_dict:
+            users_dict[ADMIN_EMAIL]['rol'] = 'admin'
+            
+        return users_dict
     except:
         return {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "admin2026", "rol": "admin"}}
 
 def guardar_usuario(correo, nombre, cargo, pw):
     try:
-        df_actual = conn.read(worksheet="USUARIOS", ttl=0)
+        try: df_actual = conn.read(worksheet="USUARIOS", ttl=0)
+        except: df_actual = pd.DataFrame(columns=["correo", "nombre", "cargo", "pw", "rol"])
+        
         admins = ["Profesional de Ejecución de la Operacion", "Supervisor Logistico", "Coordinador de Ejecución de la operación"]
         rol_asignado = "admin" if cargo in admins else "user"
-        nuevo = pd.DataFrame([{"correo": correo.lower().strip(), "nombre": nombre, "cargo": cargo, "pw": str(pw), "rol": rol_asignado}])
+        
+        nuevo = pd.DataFrame([{
+            "correo": correo.lower().strip(),
+            "nombre": nombre,
+            "cargo": cargo,
+            "pw": str(pw),
+            "rol": rol_asignado
+        }])
         df_final = pd.concat([df_actual, nuevo], ignore_index=True).drop_duplicates(subset=['correo'], keep='last')
         conn.update(worksheet="USUARIOS", data=df_final)
         return True
     except: return False
 
-# --- GESTIÓN OPERATIVA (LOG DE CAMBIOS) ---
+# --- GESTIÓN OPERATIVA ---
 def registrar_gestion_viaje(datos, usuario):
     try:
         try: df_hist = conn.read(worksheet="GESTION_OPERATIVA", ttl=0)
@@ -65,7 +82,7 @@ def registrar_gestion_viaje(datos, usuario):
         return True
     except: return False
 
-# --- SINCRONIZACIÓN RIGEL ---
+# --- RIGEL ---
 def sincronizar_semana_por_dias(f_ini, f_fin):
     auth_app, data_auth = ('rigelWS', 'rigelWS2021'), {'username': 'nospina', 'password': 'ospina2023', 'grant_type': 'password'}
     try:
