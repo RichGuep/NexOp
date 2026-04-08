@@ -23,36 +23,42 @@ RUTAS_ZMO_III = ["H317", "L328", "B326", "L329", "L312", "K324", "H308"]
 HEADERS_BYPASS = {"ngrok-skip-browser-warning": "true", "Accept": "application/json"}
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- GESTIÓN DE USUARIOS (Blindada) ---
 def obtener_usuarios():
     try:
         df = conn.read(worksheet="USUARIOS", ttl=0)
-        # Normalización total para evitar errores de acceso
+        
+        # --- LIMPIEZA DE EMERGENCIA DE COLUMNAS ---
+        # Esto elimina espacios invisibles y convierte a minúsculas los nombres de las columnas
+        df.columns = [str(c).lower().strip() for c in df.columns]
+        
+        # Si 'pw' no existe tras la limpieza, intentamos renombrar la cuarta columna (asumiendo orden: correo, nombre, cargo, pw, rol)
+        if 'pw' not in df.columns and len(df.columns) >= 4:
+            df.columns.values[3] = 'pw'
+        
         df['correo'] = df['correo'].astype(str).str.lower().str.strip()
         df['pw'] = df['pw'].astype(str).str.strip()
-        df['rol'] = df['rol'].astype(str).str.lower().str.strip()
         
         users_dict = df.set_index('correo').to_dict('index')
         
-        # Super-Admin Forzado para Richard
-        if ADMIN_EMAIL in users_dict:
-            users_dict[ADMIN_EMAIL]['rol'] = 'admin'
-        else:
+        # Super-Admin de Rescate (Si Richard no está o el Excel falla, esto SIEMPRE funciona)
+        if ADMIN_EMAIL not in users_dict:
             users_dict[ADMIN_EMAIL] = {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "Admin2026", "rol": "admin"}
+        else:
+            users_dict[ADMIN_EMAIL]['rol'] = 'admin'
             
         return users_dict
     except:
+        # Fallback total: Si Google Sheets no responde, Richard entra sí o sí
         return {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "Admin2026", "rol": "admin"}}
 
-# --- GESTIÓN DE VEHÍCULOS ---
 def obtener_listado_buses_drive():
     try:
         df = conn.read(worksheet="VEHICULOS", ttl=0)
+        df.columns = [str(c).strip() for c in df.columns]
         df['label'] = df['Código'].astype(str) + " | " + df['Placa'].astype(str)
         return df
     except: return pd.DataFrame()
 
-# --- REGISTRO DE GESTIÓN ---
 def registrar_gestion_viaje(datos, usuario):
     try:
         try: df_hist = conn.read(worksheet="GESTION_OPERATIVA", ttl=0)
@@ -69,7 +75,6 @@ def registrar_gestion_viaje(datos, usuario):
         return True
     except: return False
 
-# --- SINCRONIZACIÓN RIGEL ---
 def sincronizar_semana_por_dias(f_ini, f_fin):
     auth_app, data_auth = ('rigelWS', 'rigelWS2021'), {'username': 'nospina', 'password': 'ospina2023', 'grant_type': 'password'}
     try:
