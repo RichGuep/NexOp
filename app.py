@@ -38,49 +38,44 @@ if not st.session_state.auth:
             else: st.error("Acceso Denegado")
     st.stop()
 
-# --- POPUP DE GESTIÓN (Con datos por defecto y filtro de Empresa) ---
-@st.dialog("🛠️ Gestión Operativa (Ajuste de Servicio)", width="large")
+# --- POPUP CON VALORES POR DEFECTO ---
+@st.dialog("🛠️ Gestión Operativa (PIR)", width="large")
 def ventana_gestion(viaje):
     empresa = viaje.get('empresa', 'ZMO V')
-    # Filtro de flota según la empresa de la ruta
     prefijo = "Z63-" if empresa == "ZMO III" else "Z67-"
     df_b = processor.obtener_listado_buses_drive()
-    
-    # Filtrar listado para que Judith solo vea buses de la empresa correcta
     lista_b = ["N/A"] + df_b[df_b['Código'].astype(str).str.startswith(prefijo)]['label'].tolist() if not df_b.empty else ["N/A"]
     
-    # Intentar pre-seleccionar el bus actual
+    # Pre-seleccionar el bus actual
     try: idx_def = next(i for i, x in enumerate(lista_b) if str(viaje['bus_prog']) in x)
     except: idx_def = 0
 
     st.markdown(f"### Servicio: `{viaje['servbus']}` | Empresa: **{empresa}**")
-    with st.form("form_gestion_full"):
+    with st.form("form_gestion"):
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("#### 🚌 Vehículo")
-            st.caption(f"Original: {viaje['bus_prog']}")
-            bus_real = st.selectbox("Bus Real:", options=lista_b, index=idx_def)
-            motivo_m = st.selectbox("Motivo Móvil:", ["Operación Normal", "RETOMA", "Falta movil", "Bus varado", "Accidente", "Vandalismo"])
+            st.caption(f"Prog: {viaje['bus_prog']}")
+            bus_r = st.selectbox("Bus Real:", options=lista_b, index=idx_def)
+            mot_m = st.selectbox("Motivo:", ["Operación Normal", "RETOMA", "Falta movil", "Bus varado", "Accidente"])
         with col2:
             st.markdown("#### 👤 Operador")
-            st.caption(f"Original: {viaje['ope_prog']}")
-            ope_real = st.text_input("Operador Real:", value=viaje['ope_prog'])
-            motivo_o = st.selectbox("Motivo Operador:", ["Operación Normal", "Falta operador", "Enfermo", "No llegó"])
+            st.caption(f"Prog: {viaje['ope_prog']}")
+            ope_r = st.text_input("Operador Real:", value=viaje['ope_prog'])
+            mot_o = st.selectbox("Motivo:", ["Operación Normal", "Falta operador", "Enfermo", "No llegó"])
             elim_k = st.toggle("¿Eliminar Kilometraje?")
         
-        st.divider()
-        obs = st.text_area("📝 Observaciones Finales")
-        
+        obs = st.text_area("📝 Observación")
         if st.form_submit_button("✅ GUARDAR CAMBIOS", use_container_width=True):
-            datos_envio = {
+            datos = {
                 "servbus": viaje['servbus'], "bus_prog": viaje['bus_prog'], 
-                "bus_real": bus_real.split(" | ")[0] if " | " in bus_real else bus_real,
-                "motivo_movil": motivo_m, "ope_prog": viaje['ope_prog'],
-                "ope_real": ope_real, "motivo_ope": motivo_o,
+                "bus_real": bus_r.split(" | ")[0] if " | " in bus_r else bus_r,
+                "motivo_movil": mot_m, "ope_prog": viaje['ope_prog'],
+                "ope_real": ope_r, "motivo_ope": mot_o,
                 "eliminar_km": "SI" if elim_k else "NO", "obs_final": obs
             }
-            if processor.aplicar_gestion_servicio(datos_envio, st.session_state.user_info['nombre']):
-                st.success("¡Datos guardados!"); st.rerun()
+            if processor.aplicar_gestion_servicio(datos, st.session_state.user_info['nombre']):
+                st.success("¡Hecho!"); st.rerun()
 
 # --- APP LAYOUT ---
 st.markdown('<div class="main-header"><h1>NexOp | Green Móvil</h1></div>', unsafe_allow_html=True)
@@ -92,8 +87,8 @@ tabs = st.tabs(["📊 ESTADÍSTICAS", "🚀 GESTIÓN PIR", "📋 SEGUIMIENTO", "
 st.sidebar.markdown(f"👤 **{u_info.get('nombre', 'Usuario')}**")
 
 if not df.empty:
-    st.sidebar.subheader("🔍 Filtros de Operación")
-    f_sel = st.sidebar.selectbox("📅 Día Operativo:", sorted(df['fecha'].unique().tolist()))
+    st.sidebar.subheader("🔍 Filtros")
+    f_sel = st.sidebar.selectbox("📅 Día:", sorted(df['fecha'].unique().tolist()))
     df_f = df[df['fecha'] == f_sel].copy()
     
     # Filtro Turno
@@ -102,41 +97,13 @@ if not df.empty:
     if "Mañana" in turno: df_f = df_f[(df_f['temp_hora'] >= 6) & (df_f['temp_hora'] < 14)]
     elif "Tarde" in turno: df_f = df_f[(df_f['temp_hora'] >= 14) & (df_f['temp_hora'] < 22)]
 
-    # Otros Filtros (PIR y Buscador)
-    p_sel = st.sidebar.selectbox("🏠 Punto PIR:", ["Todos"] + list(processor.MAPEO_PIR.keys()))
-    if p_sel != "Todos": df_f = df_f[df_f['punto_pir'] == p_sel]
-    buscar = st.sidebar.text_input("🔎 Buscar Bus o Conductor:").upper()
-    if buscar: df_f = df_f[df_f['bus_prog'].astype(str).str.contains(buscar) | df_f['ope_prog'].astype(str).str.contains(buscar)]
-
-    with tabs[0]: # ESTADÍSTICAS
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Servicios", len(df_f))
-        c2.metric("Buses Únicos", len(df_f['bus_prog'].unique()))
-        c3.metric("Rutas Activas", len(df_f['ruta'].unique()))
-        st.divider()
-        with st.expander("🔍 CONSULTAR LISTADO DE BUSES POR RUTA Y TABLA"):
-            df_flota = df_f.groupby(['ruta', 'tabla'])['bus_prog'].first().reset_index()
-            st.dataframe(df_flota.rename(columns={'ruta': 'RUTA', 'tabla': 'TABLA', 'bus_prog': 'VEHÍCULO'}), use_container_width=True, hide_index=True)
-        st.plotly_chart(px.bar(df_f.groupby('ruta').size().reset_index(name='Cant'), x='ruta', y='Cant', color_discrete_sequence=['#1a531f']), use_container_width=True)
-
-    with tabs[1]: # GESTIÓN PIR (CON POP-UP)
-        st.info("Haga clic en una fila para gestionar el servicio.")
+    with tabs[1]: # GESTIÓN PIR
         cols_v = ['timeOrigin', 'ruta', 'tabla', 'bus_prog', 'ope_prog', 'empresa', 'servbus']
         sel = st.dataframe(df_f[cols_v], use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
         if sel.selection.rows:
             ventana_gestion(df_f.iloc[sel.selection.rows[0]])
 
-    with tabs[2]: # SEGUIMIENTO
-        st.dataframe(df_f.drop(columns=['temp_hora']), use_container_width=True, hide_index=True)
-
 if is_admin:
-    with tabs[-1]: # CONFIG
-        with st.form("desc_form"):
-            c1, c2 = st.columns(2)
-            f_i, f_f = c1.date_input("Inicio"), c2.date_input("Fin")
-            if st.form_submit_button("🚀 INICIAR DESCARGA RIGEL"):
-                success, msg = processor.sincronizar_semana_por_dias(str(f_i), str(f_f))
-                if success: st.success(msg); st.balloons(); st.rerun()
-                else: st.error(msg)
-
-if st.sidebar.button("Cerrar Sesión"): st.session_state.auth = False; st.rerun()
+    with tabs[-1]:
+        if st.button("🚀 SINCRONIZAR RIGEL"):
+            processor.sincronizar_semana_por_dias(str(st.date_input("I")), str(st.date_input("F")))
