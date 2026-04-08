@@ -23,7 +23,19 @@ MAPEO_PIR = {
 }
 
 HEADERS_BYPASS = {"ngrok-skip-browser-warning": "true", "Accept": "application/json"}
+
+# Conexión a Google Sheets (Asegúrate de tener los Secrets configurados)
 conn = st.connection("gsheets", type=GSheetsConnection)
+
+def inicializar_gsheet():
+    try: conn.read(worksheet="PRG_MASTER", ttl=0)
+    except: pass
+
+def obtener_usuarios():
+    if not os.path.exists(USERS_FILE):
+        db = {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Admin", "pw": "admin2026"}}
+        with open(USERS_FILE, 'w') as f: json.dump(db, f, indent=4)
+    with open(USERS_FILE, 'r') as f: return json.load(f)
 
 def obtener_token():
     auth_app = ('rigelWS', 'rigelWS2021')
@@ -35,49 +47,41 @@ def obtener_token():
     except: return None
 
 def sincronizar_semana_por_dias(f_ini, f_fin):
-    """
-    IMPORTANTE: Esta función consulta día por día para evitar que la API 
-    recorte la información a un solo día.
-    """
+    """Consulta día por día para evitar que Rigel devuelva solo el día actual."""
     token = obtener_token()
     if not token: return False
     
-    # Convertir fechas para el bucle
     f_dt_ini = pd.to_datetime(f_ini)
     f_dt_fin = pd.to_datetime(f_fin)
-    dias_a_consultar = (f_dt_fin - f_dt_ini).days + 1
+    delta_dias = (f_dt_fin - f_dt_ini).days + 1
     
     lista_total = []
     barra = st.progress(0)
-    status_text = st.empty()
+    status = st.empty()
 
-    for i in range(dias_a_consultar):
-        fecha_target = (f_dt_ini + timedelta(days=i)).strftime('%Y-%m-%d')
-        status_text.text(f"⏳ Descargando Rigel: {fecha_target}...")
+    for i in range(delta_dias):
+        fecha_t = (f_dt_ini + timedelta(days=i)).strftime('%Y-%m-%d')
+        status.text(f"⏳ Extrayendo de Rigel: {fecha_t}...")
         
-        # Consultamos el día exacto (ini y fin iguales)
-        url = f"{BASE_TUNNEL_URL}/ws/reportes/semanaActual/{fecha_target}/{fecha_target}/0"
+        # Petición específica para un solo día (ini y fin iguales)
+        url = f"{BASE_TUNNEL_URL}/ws/reportes/semanaActual/{fecha_t}/{fecha_t}/0"
         headers_f = {**HEADERS_BYPASS, 'Authorization': f'Bearer {token}'}
         
         try:
             r = requests.get(url, headers=headers_f, timeout=30, verify=False)
             if r.status_code == 200 and r.json():
                 df_dia = pd.DataFrame(r.json())
-                df_dia['fecha'] = fecha_target
+                df_dia['fecha'] = fecha_t
                 lista_total.append(df_dia)
-        except Exception as e:
-            st.warning(f"No se pudo obtener datos del día {fecha_target}")
+        except: continue
         
-        barra.progress((i + 1) / dias_a_consultar)
+        barra.progress((i + 1) / delta_dias)
 
-    if not lista_total: 
-        st.error("No se recolectó ningún dato de Rigel.")
-        return False
+    if not lista_total: return False
     
-    # Unimos todos los días en un solo DataFrame
     df_full = pd.concat(lista_total, ignore_index=True)
     
-    # Limpieza y Mapeo
+    # Procesamiento y Limpieza
     df_full['ruta'] = df_full['tipoTarea'].astype(str).str.split('_').str[0].str.strip().str[:5]
     df_full['punto_pir'] = df_full['ruta'].apply(lambda x: next((k for k, v in MAPEO_PIR.items() if any(r in x for r in v)), "Otros"))
     df_full['tabla'] = df_full['tabla'].astype(str).replace('None', 'N/A')
@@ -86,24 +90,42 @@ def sincronizar_semana_por_dias(f_ini, f_fin):
     df_final = df_full[cols].rename(columns={'codigoBus': 'bus_prog', 'nombre': 'ope_prog'})
     df_final['servbus'] = df_final['servbus'].astype(str)
 
-    # --- GUARDADO EN DRIVE ---
-    # 1. Maestro General
+    # --- GUARDADO MULTI-HOJA EN DRIVE ---
+    # 1. Guardar en la hoja Maestra
     conn.update(worksheet="PRG_MASTER", data=df_final)
     
-    # 2. Hojas por Ruta (Orden en el Drive)
-    rutas = df_final['ruta'].unique()
-    for r in rutas:
-        df_r = df_final[df_final['ruta'] == r]
+    # 2. Guardar por pestañas de ruta (ej. H317, G311...)
+    rutas_encontradas = df_final['ruta'].unique()
+    for r in rutas_encontradas:
+        df_ruta = df_final[df_final['ruta'] == r]
         try:
-            # Intentamos actualizar la pestaña con el nombre de la ruta
-            conn.update(worksheet=str(r), data=df_r)
-        except:
-            # Si la pestaña no existe, el programa sigue para no bloquearse
-            pass
+            # Intentar actualizar la pestaña. Si no existe en el Drive, fallará silenciosamente.
+            conn.update(worksheet=str(r), data=df_ruta)
+        except: pass
             
-    status_text.text("✅ ¡Sincronización Completa!")
+    status.text("✅ ¡Sincronización Semanal Exitosa!")
     return True
 
 def cargar_datos_pantalla():
     try: return conn.read(worksheet="PRG_MASTER", ttl=0)
     except: return pd.DataFrame()
+
+def registrar_ejecucion_gsheet(datos_gestion, usuario):
+    try:
+        try: df_ejec = conn.read(worksheet="EJECUCION", ttl=0)
+        except: df_ejec = pd.DataFrame(columns=["fecha_ejec", "servbus", "bus_real", "ope_real", "soc", "estado", "gestionado_por"])
+        
+        nueva_fila = pd.DataFrame([{
+            "fecha_ejec": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "servbus": str(datos_gestion['servbus']),
+            "bus_real": datos_gestion['bus_real'],
+            "ope_real": datos_gestion['ope_real'],
+            "soc": datos_gestion['soc'],
+            "estado": datos_gestion['estado'],
+            "gestionado_por": usuario
+        }])
+        
+        df_f = pd.concat([df_ejec, nueva_fila], ignore_index=True)
+        conn.update(worksheet="EJECUCION", data=df_f)
+        return True
+    except: return False
