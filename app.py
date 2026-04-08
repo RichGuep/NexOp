@@ -17,13 +17,14 @@ if not st.session_state.auth:
     c2 = st.columns([1,1.2,1])[1]
     with c2:
         st.markdown('<div class="main-header"><h1>NexOp Access</h1></div>', unsafe_allow_html=True)
-        u = st.text_input("Usuario").lower().strip()
-        p = st.text_input("Contraseña", type="password")
-        if st.button("INGRESAR", use_container_width=True):
-            users = processor.obtener_usuarios()
-            if u in users and str(users[u]["pw"]) == p:
-                st.session_state.auth = True; st.session_state.user_info = users[u]; st.rerun()
-            else: st.error("Acceso Denegado")
+        with st.container(border=True):
+            u = st.text_input("Usuario (Correo)").lower().strip()
+            p = st.text_input("Contraseña", type="password").strip()
+            if st.button("INGRESAR", use_container_width=True):
+                users = processor.obtener_usuarios()
+                if u in users and str(users[u]["pw"]) == p:
+                    st.session_state.auth = True; st.session_state.user_info = users[u]; st.rerun()
+                else: st.error("Acceso Denegado. Verifique sus datos.")
     st.stop()
 
 # --- CARGA DE VEHÍCULOS ---
@@ -43,11 +44,11 @@ def ventana_gestion(viaje):
             st.markdown("#### 🚌 Vehículos")
             bus_p = c1.selectbox("Bus Principal:", options=lista_b, index=0)
             bus_a = c1.selectbox("Bus Adicional:", options=lista_b)
-            mot_b = c1.selectbox("Motivo Bus:", ["Operación Normal", "Falta movil", "Varado", "Accidente", "Vandalismo"])
+            mot_b = c1.selectbox("Motivo Bus:", ["Normal", "Falta movil", "Varado", "Accidente", "Vandalismo"])
         with c2:
             st.markdown("#### 👤 Personal")
             ope_r = c2.text_input("Operador Real", value=viaje.get('ope_prog', ''))
-            mot_o = c2.selectbox("Motivo Operador:", ["Operación Normal", "Falta operador", "Enfermo", "No llegó"])
+            mot_o = c2.selectbox("Motivo Operador:", ["Normal", "Falta operador", "Enfermo", "No llegó"])
             elim_k = c2.toggle("Eliminar KM")
         
         st.divider()
@@ -68,7 +69,7 @@ st.sidebar.markdown(f"👤 **{u_info.get('nombre', 'Usuario')}**")
 st.sidebar.caption(f"Cargo: {u_info.get('cargo', 'N/A')}")
 
 if not df.empty:
-    st.sidebar.subheader("🔍 Filtros")
+    st.sidebar.subheader("🔍 Filtros de Operación")
     f_sel = st.sidebar.selectbox("📅 Día Operativo:", sorted(df['fecha'].unique().tolist()))
     df_f = df[df['fecha'] == f_sel].copy()
     
@@ -86,22 +87,18 @@ if not df.empty:
     buscar = st.sidebar.text_input("🔎 Buscar Bus o Conductor:").upper()
     if buscar: df_f = df_f[df_f['bus_prog'].astype(str).str.contains(buscar) | df_f['ope_prog'].astype(str).str.contains(buscar)]
 
-    with tabs[0]: # MÉTRICAS
+    with tabs[0]: # MÉTRICAS Y CONSULTA DE FLOTA
         c1, c2, c3 = st.columns(3)
         c1.metric("Servicios", len(df_f))
         c2.metric("Buses Unicos", len(df_f['bus_prog'].unique()))
         c3.metric("Rutas Activas", len(df_f['ruta'].unique()))
         
         st.divider()
-        # --- NUEVO BOTÓN: CONSULTA DE FLOTA POR RUTA ---
         with st.expander("🔍 CONSULTAR LISTADO DE BUSES POR RUTA Y TABLA"):
             if not df_f.empty:
-                # Agrupamos por ruta y tabla, tomando el primer bus asignado que aparezca
                 df_flota = df_f.groupby(['ruta', 'tabla'])['bus_prog'].first().reset_index()
                 df_flota = df_flota.rename(columns={'ruta': 'RUTA', 'tabla': 'TABLA', 'bus_prog': 'VEHÍCULO ASIGNADO'})
                 st.dataframe(df_flota, use_container_width=True, hide_index=True)
-            else:
-                st.info("No hay datos para mostrar con los filtros actuales.")
         
         st.plotly_chart(px.bar(df_f.groupby('ruta').size().reset_index(name='Cant'), x='ruta', y='Cant', color_discrete_sequence=['#1a531f']), use_container_width=True)
 
