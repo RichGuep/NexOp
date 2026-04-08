@@ -26,21 +26,28 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def obtener_usuarios():
     try:
         df = conn.read(worksheet="USUARIOS", ttl=0)
-        
-        # --- LIMPIEZA DE EMERGENCIA DE COLUMNAS ---
-        # Esto elimina espacios invisibles y convierte a minúsculas los nombres de las columnas
+        # Limpieza de nombres de columnas (quitar espacios, minúsculas)
         df.columns = [str(c).lower().strip() for c in df.columns]
         
-        # Si 'pw' no existe tras la limpieza, intentamos renombrar la cuarta columna (asumiendo orden: correo, nombre, cargo, pw, rol)
-        if 'pw' not in df.columns and len(df.columns) >= 4:
-            df.columns.values[3] = 'pw'
+        # Mapeo manual por posición para asegurar que 'pw' y 'rol' existan
+        # Estructura esperada: 0:correo, 1:nombre, 2:cargo, 3:pw, 4:rol
+        mapeo = {df.columns[0]: 'correo'}
+        if len(df.columns) >= 2: mapeo[df.columns[1]] = 'nombre'
+        if len(df.columns) >= 3: mapeo[df.columns[2]] = 'cargo'
+        if len(df.columns) >= 4: mapeo[df.columns[3]] = 'pw'
+        if len(df.columns) >= 5: mapeo[df.columns[4]] = 'rol'
         
+        df = df.rename(columns=mapeo)
+        
+        # Limpieza de datos en las celdas
         df['correo'] = df['correo'].astype(str).str.lower().str.strip()
         df['pw'] = df['pw'].astype(str).str.strip()
+        if 'rol' in df.columns:
+            df['rol'] = df['rol'].astype(str).str.lower().str.strip()
         
         users_dict = df.set_index('correo').to_dict('index')
         
-        # Super-Admin de Rescate (Si Richard no está o el Excel falla, esto SIEMPRE funciona)
+        # Super-Admin de Emergencia
         if ADMIN_EMAIL not in users_dict:
             users_dict[ADMIN_EMAIL] = {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "Admin2026", "rol": "admin"}
         else:
@@ -48,7 +55,6 @@ def obtener_usuarios():
             
         return users_dict
     except:
-        # Fallback total: Si Google Sheets no responde, Richard entra sí o sí
         return {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "Admin2026", "rol": "admin"}}
 
 def obtener_listado_buses_drive():
