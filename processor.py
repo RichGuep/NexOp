@@ -23,6 +23,28 @@ RUTAS_ZMO_III = ["H317", "L328", "B326", "L329", "L312", "K324", "H308"]
 HEADERS_BYPASS = {"ngrok-skip-browser-warning": "true", "Accept": "application/json"}
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# --- GESTIÓN DE USUARIOS (Blindada) ---
+def obtener_usuarios():
+    try:
+        df = conn.read(worksheet="USUARIOS", ttl=0)
+        # Normalización total para evitar errores de acceso
+        df['correo'] = df['correo'].astype(str).str.lower().str.strip()
+        df['pw'] = df['pw'].astype(str).str.strip()
+        df['rol'] = df['rol'].astype(str).str.lower().str.strip()
+        
+        users_dict = df.set_index('correo').to_dict('index')
+        
+        # Super-Admin Forzado para Richard
+        if ADMIN_EMAIL in users_dict:
+            users_dict[ADMIN_EMAIL]['rol'] = 'admin'
+        else:
+            users_dict[ADMIN_EMAIL] = {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "Admin2026", "rol": "admin"}
+            
+        return users_dict
+    except:
+        return {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "Admin2026", "rol": "admin"}}
+
+# --- GESTIÓN DE VEHÍCULOS ---
 def obtener_listado_buses_drive():
     try:
         df = conn.read(worksheet="VEHICULOS", ttl=0)
@@ -30,16 +52,7 @@ def obtener_listado_buses_drive():
         return df
     except: return pd.DataFrame()
 
-def obtener_usuarios():
-    try:
-        df = conn.read(worksheet="USUARIOS", ttl=0)
-        df['correo'] = df['correo'].str.lower().str.strip()
-        users_dict = df.set_index('correo').to_dict('index')
-        if ADMIN_EMAIL in users_dict: users_dict[ADMIN_EMAIL]['rol'] = 'admin'
-        return users_dict
-    except:
-        return {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "Admin2026", "rol": "admin"}}
-
+# --- REGISTRO DE GESTIÓN ---
 def registrar_gestion_viaje(datos, usuario):
     try:
         try: df_hist = conn.read(worksheet="GESTION_OPERATIVA", ttl=0)
@@ -56,6 +69,7 @@ def registrar_gestion_viaje(datos, usuario):
         return True
     except: return False
 
+# --- SINCRONIZACIÓN RIGEL ---
 def sincronizar_semana_por_dias(f_ini, f_fin):
     auth_app, data_auth = ('rigelWS', 'rigelWS2021'), {'username': 'nospina', 'password': 'ospina2023', 'grant_type': 'password'}
     try:
@@ -80,7 +94,7 @@ def sincronizar_semana_por_dias(f_ini, f_fin):
         except: continue
         barra.progress((i + 1) / delta)
     
-    if not lista_total: return False, "Sin datos"
+    if not lista_total: return False, "Sin datos en el rango"
     df_full = pd.concat(lista_total, ignore_index=True)
     df_full['ruta'] = df_full['tipoTarea'].astype(str).str.split('_').str[0].str.strip().str[:5]
     df_full['punto_pir'] = df_full['ruta'].apply(lambda x: next((k for k, v in MAPEO_PIR.items() if any(r in x for r in v)), "Otros"))
