@@ -29,7 +29,7 @@ if not st.session_state.auth:
 # --- CARGA DE VEHÍCULOS ---
 df_buses_raw = processor.obtener_listado_buses_drive()
 
-# --- POPUP DE GESTIÓN RESTAURADO ---
+# --- POPUP DE GESTIÓN ---
 @st.dialog("🛠️ Gestión Operativa (PIR)", width="large")
 def ventana_gestion(viaje):
     empresa = viaje.get('empresa', 'ZMO V')
@@ -87,21 +87,36 @@ if not df.empty:
     if buscar: df_f = df_f[df_f['bus_prog'].astype(str).str.contains(buscar) | df_f['ope_prog'].astype(str).str.contains(buscar)]
 
     with tabs[0]: # MÉTRICAS
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Servicios", len(df_f)); m2.metric("Buses", len(df_f['bus_prog'].unique())); m3.metric("Rutas", len(df_f['ruta'].unique()))
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Servicios", len(df_f))
+        c2.metric("Buses Unicos", len(df_f['bus_prog'].unique()))
+        c3.metric("Rutas Activas", len(df_f['ruta'].unique()))
+        
+        st.divider()
+        # --- NUEVO BOTÓN: CONSULTA DE FLOTA POR RUTA ---
+        with st.expander("🔍 CONSULTAR LISTADO DE BUSES POR RUTA Y TABLA"):
+            if not df_f.empty:
+                # Agrupamos por ruta y tabla, tomando el primer bus asignado que aparezca
+                df_flota = df_f.groupby(['ruta', 'tabla'])['bus_prog'].first().reset_index()
+                df_flota = df_flota.rename(columns={'ruta': 'RUTA', 'tabla': 'TABLA', 'bus_prog': 'VEHÍCULO ASIGNADO'})
+                st.dataframe(df_flota, use_container_width=True, hide_index=True)
+            else:
+                st.info("No hay datos para mostrar con los filtros actuales.")
+        
         st.plotly_chart(px.bar(df_f.groupby('ruta').size().reset_index(name='Cant'), x='ruta', y='Cant', color_discrete_sequence=['#1a531f']), use_container_width=True)
 
-    with tabs[1]: # GESTIÓN PIR (CON POP-UP)
+    with tabs[1]: # GESTIÓN PIR
         st.info(f"Consola PIR - {f_sel}. Haga clic en una fila para gestionar.")
         cols_v = ['timeOrigin', 'ruta', 'tabla', 'bus_prog', 'ope_prog', 'empresa', 'servbus']
         sel = st.dataframe(df_f[cols_v], use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
         if sel.selection.rows:
             ventana_gestion(df_f.iloc[sel.selection.rows[0]])
     
-    with tabs[2]: st.dataframe(df_f.drop(columns=['temp_hora']), use_container_width=True, hide_index=True)
+    with tabs[2]: # SEGUIMIENTO
+        st.dataframe(df_f.drop(columns=['temp_hora']), use_container_width=True, hide_index=True)
 
 if is_admin:
-    with tabs[-1]:
+    with tabs[-1]: # CONFIG
         st.subheader("⚙️ Configuración")
         with st.form("descarga_form"):
             c1, c2 = st.columns(2)
