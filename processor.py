@@ -58,44 +58,29 @@ def registrar_gestion_viaje(datos, usuario):
 
 def sincronizar_semana_por_dias(f_ini, f_fin):
     auth_app, data_auth = ('rigelWS', 'rigelWS2021'), {'username': 'nospina', 'password': 'ospina2023', 'grant_type': 'password'}
-    
-    # 1. Obtener Token
     try:
         r_t = requests.post(f"{BASE_TUNNEL_URL}/ws/oauth/token", data=data_auth, auth=auth_app, timeout=15, verify=False, headers=HEADERS_BYPASS)
         token = r_t.json().get('access_token')
-        if not token: return False, "Error de autenticación con Rigel"
-    except: return False, "No se pudo conectar con el servidor de Rigel"
+    except: return False, "Error de conexión"
     
     f_dt_ini, f_dt_fin = pd.to_datetime(f_ini), pd.to_datetime(f_fin)
     delta = (f_dt_fin - f_dt_ini).days + 1
     lista_total = []
-    
-    status_placeholder = st.empty() # Espacio para mensajes de estado
+    status_placeholder = st.empty()
     barra = st.progress(0)
     
     for i in range(delta):
         fecha_t = (f_dt_ini + timedelta(days=i)).strftime('%Y-%m-%d')
-        status_placeholder.info(f"⏳ Descargando: {fecha_t}...") # Mensaje de estado
-        
+        status_placeholder.info(f"⏳ Descargando: {fecha_t}...")
         url = f"{BASE_TUNNEL_URL}/ws/reportes/semanaActual/{fecha_t}/{fecha_t}/0"
         try:
             r = requests.get(url, headers={**HEADERS_BYPASS, 'Authorization': f'Bearer {token}'}, timeout=30, verify=False)
             if r.status_code == 200 and r.json():
-                df_dia = pd.DataFrame(r.json())
-                df_dia['fecha'] = fecha_t
-                lista_total.append(df_dia)
-                status_placeholder.success(f"✅ {fecha_t} descargado correctamente.")
-            else:
-                status_placeholder.warning(f"⚠️ Sin datos para el día: {fecha_t}")
-        except:
-            status_placeholder.error(f"❌ Error al descargar el día: {fecha_t}")
-            continue
-        
+                df_dia = pd.DataFrame(r.json()); df_dia['fecha'] = fecha_t; lista_total.append(df_dia)
+        except: continue
         barra.progress((i + 1) / delta)
     
-    if not lista_total: return False, "No se encontraron datos en el rango seleccionado"
-    
-    status_placeholder.info("📊 Procesando y subiendo a Google Sheets...")
+    if not lista_total: return False, "Sin datos"
     df_full = pd.concat(lista_total, ignore_index=True)
     df_full['ruta'] = df_full['tipoTarea'].astype(str).str.split('_').str[0].str.strip().str[:5]
     df_full['punto_pir'] = df_full['ruta'].apply(lambda x: next((k for k, v in MAPEO_PIR.items() if any(r in x for r in v)), "Otros"))
@@ -104,10 +89,8 @@ def sincronizar_semana_por_dias(f_ini, f_fin):
     
     cols = ['fecha', 'servbus', 'timeOrigin', 'ruta', 'tabla', 'codigoBus', 'nombre', 'km', 'codigoTm', 'punto_pir', 'empresa']
     df_res = df_full[cols].rename(columns={'codigoBus': 'bus_prog', 'nombre': 'ope_prog'})
-    
     conn.update(worksheet="PRG_MASTER", data=df_res)
-    status_placeholder.success("🎊 ¡Descarga y Sincronización completa!")
-    return True, "Proceso finalizado con éxito"
+    return True, "Sincronización Exitosa"
 
 def cargar_datos_pantalla():
     try:
