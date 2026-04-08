@@ -7,7 +7,6 @@ import urllib3
 import json
 import os
 
-# Desactivar advertencias SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- CONFIGURACIÓN ---
@@ -28,28 +27,16 @@ HEADERS_BYPASS = {
     "Accept": "application/json"
 }
 
-# Conexión oficial con Service Account (Configurada en Secrets)
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def inicializar_gsheet():
-    try:
-        conn.read(worksheet="PRG_MASTER", ttl=0)
-    except:
-        pass
-
-def inicializar_sistema():
-    if not os.path.exists(USERS_FILE):
-        db_inicial = {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Administrador", "pw": "admin2026"}}
-        with open(USERS_FILE, 'w') as f: json.dump(db_inicial, f, indent=4)
+    try: conn.read(worksheet="PRG_MASTER", ttl=0)
+    except: pass
 
 def obtener_usuarios():
-    if not os.path.exists(USERS_FILE): inicializar_sistema()
+    if not os.path.exists(USERS_FILE):
+        with open(USERS_FILE, 'w') as f: json.dump({ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Administrador", "pw": "admin2026"}}, f)
     with open(USERS_FILE, 'r') as f: return json.load(f)
-
-def guardar_usuario(correo, nombre, cargo, pw):
-    db = obtener_usuarios()
-    db[correo.lower().strip()] = {"nombre": nombre, "cargo": cargo, "pw": pw}
-    with open(USERS_FILE, 'w') as f: json.dump(db, f, indent=4)
 
 def obtener_token():
     auth_app = ('rigelWS', 'rigelWS2021')
@@ -61,7 +48,7 @@ def obtener_token():
     except: return None
 
 def sincronizar_rango_rigel(f_ini, f_fin):
-    """Descarga la semana completa y extrae la fecha de cada servicio."""
+    """Descarga la semana completa y crea la columna 'fecha' para filtrar."""
     token = obtener_token()
     if not token: return False
     
@@ -75,8 +62,8 @@ def sincronizar_rango_rigel(f_ini, f_fin):
         
         df = pd.DataFrame(raw)
         
-        # --- PROCESAMIENTO DE FECHAS Y RUTAS ---
-        # Extraemos la fecha (AAAA-MM-DD) del campo timeOrigin
+        # --- PROCESAMIENTO CLAVE ---
+        # Convertimos timeOrigin a fecha real (AAAA-MM-DD)
         df['fecha'] = pd.to_datetime(df['timeOrigin']).dt.strftime('%Y-%m-%d')
         df['ruta'] = df['tipoTarea'].astype(str).str.split('_').str[0].str.strip().str[:5]
         df['punto_pir'] = df['ruta'].apply(lambda x: next((k for k, v in MAPEO_PIR.items() if any(r in x for r in v)), "Otros"))
@@ -86,7 +73,7 @@ def sincronizar_rango_rigel(f_ini, f_fin):
         df_final = df[cols].rename(columns={'codigoBus': 'bus_prog', 'nombre': 'ope_prog'})
         df_final['servbus'] = df_final['servbus'].astype(str)
 
-        # Guardar en Google Sheets (Sobrescribe con la nueva semana)
+        # Actualizamos la hoja maestra con toda la semana
         conn.update(worksheet="PRG_MASTER", data=df_final)
         return True
     except Exception as e:
@@ -94,29 +81,16 @@ def sincronizar_rango_rigel(f_ini, f_fin):
         return False
 
 def cargar_datos_pantalla():
-    try:
-        return conn.read(worksheet="PRG_MASTER", ttl=0)
-    except:
-        return pd.DataFrame()
+    try: return conn.read(worksheet="PRG_MASTER", ttl=0)
+    except: return pd.DataFrame()
 
 def registrar_ejecucion_gsheet(datos_gestion, usuario):
+    # (Mismo código anterior para guardar en pestaña EJECUCION)
     try:
         try: df_ejec = conn.read(worksheet="EJECUCION", ttl=0)
         except: df_ejec = pd.DataFrame(columns=["fecha_ejec", "servbus", "bus_real", "ope_real", "soc", "estado", "gestionado_por"])
-        
-        nueva_fila = pd.DataFrame([{
-            "fecha_ejec": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "servbus": str(datos_gestion['servbus']),
-            "bus_real": datos_gestion['bus_real'],
-            "ope_real": datos_gestion['ope_real'],
-            "soc": datos_gestion['soc'],
-            "estado": datos_gestion['estado'],
-            "gestionado_por": usuario
-        }])
-        
+        nueva_fila = pd.DataFrame([{"fecha_ejec": datetime.now().strftime("%Y-%m-%d %H:%M"), "servbus": str(datos_gestion['servbus']), "bus_real": datos_gestion['bus_real'], "ope_real": datos_gestion['ope_real'], "soc": datos_gestion['soc'], "estado": datos_gestion['estado'], "gestionado_por": usuario}])
         df_f = pd.concat([df_ejec, nueva_fila], ignore_index=True)
         conn.update(worksheet="EJECUCION", data=df_f)
         return True
-    except Exception as e:
-        st.error(f"Error al guardar: {e}")
-        return False
+    except: return False
