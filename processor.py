@@ -25,27 +25,18 @@ RUTAS_ZMO_III = ["H317", "L328", "B326", "L329", "L312", "K324", "H308"]
 HEADERS_BYPASS = {"ngrok-skip-browser-warning": "true", "Accept": "application/json"}
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- GESTIÓN DE VEHÍCULOS (Desde Drive) ---
 def obtener_listado_buses_drive():
     try:
         df_buses = conn.read(worksheet="VEHICULOS", ttl=0)
         df_buses['label'] = df_buses['Código'].astype(str) + " | " + df_buses['Placa'].astype(str)
         return df_buses
-    except:
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
-# --- GESTIÓN DE USUARIOS ---
 def obtener_usuarios():
     try:
         df_user = conn.read(worksheet="USUARIOS", ttl=0)
-        if df_user.empty:
-            return {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "Admin2026", "rol": "admin"}}
-        
         df_user['correo'] = df_user['correo'].str.lower().str.strip()
-        df_user['rol'] = df_user['rol'].str.lower().str.strip()
         users_dict = df_user.set_index('correo').to_dict('index')
-        
-        # Llave Maestra para Richard
         if ADMIN_EMAIL in users_dict: users_dict[ADMIN_EMAIL]['rol'] = 'admin'
         return users_dict
     except:
@@ -62,30 +53,22 @@ def guardar_usuario(correo, nombre, cargo, pw):
         return True
     except: return False
 
-# --- GESTIÓN OPERATIVA ---
 def registrar_gestion_viaje(datos, usuario):
     try:
         try: df_hist = conn.read(worksheet="GESTION_OPERATIVA", ttl=0)
         except: df_hist = pd.DataFrame()
-        
         nueva_gest = pd.DataFrame([{
             "fecha_registro": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "servbus": str(datos['servbus']),
-            "bus_final": datos['bus_final'],
-            "bus_adicional": datos['bus_adic'],
-            "motivo_bus": datos['motivo_bus'],
-            "ope_final": datos['ope_final'],
-            "motivo_ope": datos['motivo_ope'],
-            "eliminar_km": datos['eliminar_km'],
-            "obs_final": datos['obs_final'],
-            "gestionado_por": usuario
+            "servbus": str(datos['servbus']), "bus_final": datos['bus_final'],
+            "bus_adicional": datos['bus_adic'], "motivo_bus": datos['motivo_bus'],
+            "ope_final": datos['ope_final'], "motivo_ope": datos['motivo_ope'],
+            "eliminar_km": datos['eliminar_km'], "obs_final": datos['obs_final'], "gestionado_por": usuario
         }])
         df_f = pd.concat([df_hist, nueva_gest], ignore_index=True)
         conn.update(worksheet="GESTION_OPERATIVA", data=df_f)
         return True
     except: return False
 
-# --- SINCRONIZACIÓN RIGEL ---
 def sincronizar_semana_por_dias(f_ini, f_fin):
     auth_app, data_auth = ('rigelWS', 'rigelWS2021'), {'username': 'nospina', 'password': 'ospina2023', 'grant_type': 'password'}
     try:
@@ -103,9 +86,7 @@ def sincronizar_semana_por_dias(f_ini, f_fin):
         try:
             r = requests.get(url, headers={**HEADERS_BYPASS, 'Authorization': f'Bearer {token}'}, timeout=30, verify=False)
             if r.status_code == 200 and r.json():
-                df_dia = pd.DataFrame(r.json())
-                df_dia['fecha'] = fecha_t
-                lista_total.append(df_dia)
+                df_dia = pd.DataFrame(r.json()); df_dia['fecha'] = fecha_t; lista_total.append(df_dia)
         except: continue
         barra.progress((i + 1) / delta)
     
@@ -115,7 +96,7 @@ def sincronizar_semana_por_dias(f_ini, f_fin):
     df_full['punto_pir'] = df_full['ruta'].apply(lambda x: next((k for k, v in MAPEO_PIR.items() if any(r in x for r in v)), "Otros"))
     df_full['tabla'] = df_full['tabla'].astype(str).replace('None', 'N/A')
     
-    # Identificar Concesión
+    # IMPORTANTE: Crear la columna de concesión para evitar el KeyError
     df_full['concesion'] = df_full['ruta'].apply(lambda x: "ZMO III" if x in RUTAS_ZMO_III else "ZMO V")
     
     cols = ['fecha', 'servbus', 'timeOrigin', 'ruta', 'tabla', 'codigoBus', 'nombre', 'km', 'codigoTm', 'punto_pir', 'concesion']
