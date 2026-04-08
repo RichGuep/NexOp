@@ -14,45 +14,26 @@ ADMIN_EMAIL = "richard.guevara@greenmovil.com.co"
 MAPEO_PIR = {
     "Puerta de Teja": ["H317", "L328", "B326"],
     "Puente Grande": ["G311", "H308", "H327"],
-    "Recodo": ["A003", "A332"],
+    "Recodo": ["A003", "KA332"],
     "Brisas 1": ["L331", "B314", "H318", "L325"],
     "Brisas 2": ["L329", "L312", "K324"]
 }
 
-RUTAS_ZMO_III = ["H317", "L328", "B326", "L329", "L312", "K324", "H308"]
+# Clasificación Exacta por Empresa
+RUTAS_ZMO_III = ["H317", "L328", "B326", "H308", "L329", "L312", "K324"]
+
 HEADERS_BYPASS = {"ngrok-skip-browser-warning": "true", "Accept": "application/json"}
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def obtener_usuarios():
     try:
         df = conn.read(worksheet="USUARIOS", ttl=0)
-        # Limpieza de nombres de columnas (quitar espacios, minúsculas)
         df.columns = [str(c).lower().strip() for c in df.columns]
-        
-        # Mapeo manual por posición para asegurar que 'pw' y 'rol' existan
-        # Estructura esperada: 0:correo, 1:nombre, 2:cargo, 3:pw, 4:rol
-        mapeo = {df.columns[0]: 'correo'}
-        if len(df.columns) >= 2: mapeo[df.columns[1]] = 'nombre'
-        if len(df.columns) >= 3: mapeo[df.columns[2]] = 'cargo'
-        if len(df.columns) >= 4: mapeo[df.columns[3]] = 'pw'
-        if len(df.columns) >= 5: mapeo[df.columns[4]] = 'rol'
-        
+        mapeo = {df.columns[0]: 'correo', df.columns[1]: 'nombre', df.columns[2]: 'cargo', df.columns[3]: 'pw', df.columns[4]: 'rol'}
         df = df.rename(columns=mapeo)
-        
-        # Limpieza de datos en las celdas
         df['correo'] = df['correo'].astype(str).str.lower().str.strip()
-        df['pw'] = df['pw'].astype(str).str.strip()
-        if 'rol' in df.columns:
-            df['rol'] = df['rol'].astype(str).str.lower().str.strip()
-        
         users_dict = df.set_index('correo').to_dict('index')
-        
-        # Super-Admin de Emergencia
-        if ADMIN_EMAIL not in users_dict:
-            users_dict[ADMIN_EMAIL] = {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "Admin2026", "rol": "admin"}
-        else:
-            users_dict[ADMIN_EMAIL]['rol'] = 'admin'
-            
+        if ADMIN_EMAIL in users_dict: users_dict[ADMIN_EMAIL]['rol'] = 'admin'
         return users_dict
     except:
         return {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "Admin2026", "rol": "admin"}}
@@ -65,20 +46,31 @@ def obtener_listado_buses_drive():
         return df
     except: return pd.DataFrame()
 
-def registrar_gestion_viaje(datos, usuario):
+def aplicar_gestion_servicio(datos, usuario):
     try:
+        # 1. Historial
         try: df_hist = conn.read(worksheet="GESTION_OPERATIVA", ttl=0)
         except: df_hist = pd.DataFrame()
         nueva = pd.DataFrame([{
             "fecha_registro": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "servbus": str(datos['servbus']), "bus_final": datos['bus_final'],
-            "bus_adicional": datos['bus_adic'], "motivo_bus": datos['motivo_bus'],
-            "ope_final": datos['ope_final'], "motivo_ope": datos['motivo_ope'],
-            "eliminar_km": datos['eliminar_km'], "obs_final": datos['obs_final'], "gestionado_por": usuario
+            "servbus": str(datos['servbus']), "bus_original": datos['bus_prog'],
+            "bus_real": datos['bus_real'], "motivo_movil": datos['motivo_movil'],
+            "ope_original": datos['ope_prog'], "ope_real": datos['ope_real'],
+            "motivo_ope": datos['motivo_ope'], "eliminar_km": datos['eliminar_km'],
+            "obs_final": datos['obs_final'], "gestionado_por": usuario
         }])
-        df_f = pd.concat([df_hist, nueva], ignore_index=True)
-        conn.update(worksheet="GESTION_OPERATIVA", data=df_f)
-        return True
+        df_hist_final = pd.concat([df_hist, nueva], ignore_index=True)
+        conn.update(worksheet="GESTION_OPERATIVA", data=df_hist_final)
+
+        # 2. Actualizar Maestro
+        df_master = conn.read(worksheet="PRG_MASTER", ttl=0)
+        mask = df_master['servbus'].astype(str) == str(datos['servbus'])
+        if mask.any():
+            df_master.loc[mask, 'bus_prog'] = datos['bus_real']
+            df_master.loc[mask, 'ope_prog'] = datos['ope_real']
+            conn.update(worksheet="PRG_MASTER", data=df_master)
+            return True
+        return False
     except: return False
 
 def sincronizar_semana_por_dias(f_ini, f_fin):
@@ -86,14 +78,13 @@ def sincronizar_semana_por_dias(f_ini, f_fin):
     try:
         r_t = requests.post(f"{BASE_TUNNEL_URL}/ws/oauth/token", data=data_auth, auth=auth_app, timeout=15, verify=False, headers=HEADERS_BYPASS)
         token = r_t.json().get('access_token')
-    except: return False, "Error de conexión"
+    except: return False, "Error"
     
     f_dt_ini, f_dt_fin = pd.to_datetime(f_ini), pd.to_datetime(f_fin)
     delta = (f_dt_fin - f_dt_ini).days + 1
     lista_total = []
     status_placeholder = st.empty()
     barra = st.progress(0)
-    
     for i in range(delta):
         fecha_t = (f_dt_ini + timedelta(days=i)).strftime('%Y-%m-%d')
         status_placeholder.info(f"⏳ Descargando: {fecha_t}...")
@@ -105,7 +96,7 @@ def sincronizar_semana_por_dias(f_ini, f_fin):
         except: continue
         barra.progress((i + 1) / delta)
     
-    if not lista_total: return False, "Sin datos en el rango"
+    if not lista_total: return False, "Sin datos"
     df_full = pd.concat(lista_total, ignore_index=True)
     df_full['ruta'] = df_full['tipoTarea'].astype(str).str.split('_').str[0].str.strip().str[:5]
     df_full['punto_pir'] = df_full['ruta'].apply(lambda x: next((k for k, v in MAPEO_PIR.items() if any(r in x for r in v)), "Otros"))
@@ -115,7 +106,7 @@ def sincronizar_semana_por_dias(f_ini, f_fin):
     cols = ['fecha', 'servbus', 'timeOrigin', 'ruta', 'tabla', 'codigoBus', 'nombre', 'km', 'codigoTm', 'punto_pir', 'empresa']
     df_res = df_full[cols].rename(columns={'codigoBus': 'bus_prog', 'nombre': 'ope_prog'})
     conn.update(worksheet="PRG_MASTER", data=df_res)
-    return True, "Sincronización Exitosa"
+    return True, "Éxito"
 
 def cargar_datos_pantalla():
     try:
