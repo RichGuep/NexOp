@@ -1,4 +1,4 @@
-import pandas as pd
+iimport pandas as pd
 import requests
 from datetime import datetime, timedelta
 import streamlit as st
@@ -7,7 +7,6 @@ import urllib3
 import json
 import os
 
-# Desactivar advertencias SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- CONFIGURACIÓN ---
@@ -28,25 +27,16 @@ HEADERS_BYPASS = {
     "Accept": "application/json"
 }
 
-# Conexión oficial con Service Account
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def inicializar_gsheet():
-    try:
-        conn.read(worksheet="PRG_MASTER", ttl=0)
-    except:
-        pass
+    try: conn.read(worksheet="PRG_MASTER", ttl=0)
+    except: pass
 
 def obtener_usuarios():
     if not os.path.exists(USERS_FILE):
-        db_inicial = {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Administrador", "pw": "admin2026"}}
-        with open(USERS_FILE, 'w') as f: json.dump(db_inicial, f, indent=4)
+        with open(USERS_FILE, 'w') as f: json.dump({ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Admin", "pw": "admin2026"}}, f)
     with open(USERS_FILE, 'r') as f: return json.load(f)
-
-def guardar_usuario(correo, nombre, cargo, pw):
-    db = obtener_usuarios()
-    db[correo.lower().strip()] = {"nombre": nombre, "cargo": cargo, "pw": pw}
-    with open(USERS_FILE, 'w') as f: json.dump(db, f, indent=4)
 
 def obtener_token():
     auth_app = ('rigelWS', 'rigelWS2021')
@@ -58,63 +48,59 @@ def obtener_token():
     except: return None
 
 def sincronizar_rango_rigel(f_ini, f_fin):
-    """Descarga la semana completa de Rigel y la guarda organizada por fecha."""
     token = obtener_token()
     if not token: return False
     
-    # URL para descargar el rango seleccionado
+    # URL de Rigel
     url = f"{BASE_TUNNEL_URL}/ws/reportes/semanaActual/{f_ini}/{f_fin}/0"
     headers_f = {**HEADERS_BYPASS, 'Authorization': f'Bearer {token}'}
     
     try:
         r = requests.get(url, headers=headers_f, timeout=60, verify=False)
         raw = r.json()
-        if not raw: return False
+        if not raw or len(raw) == 0: 
+            st.error("Rigel no envió datos.")
+            return False
         
         df = pd.DataFrame(raw)
         
-        # --- PROCESAMIENTO DE FECHAS ---
-        # Extraemos la fecha pura (AAAA-MM-DD) del campo timeOrigin de Rigel
-        df['fecha'] = pd.to_datetime(df['timeOrigin']).dt.strftime('%Y-%m-%d')
+        # --- PROCESAMIENTO CRÍTICO ---
+        # Aseguramos que 'timeOrigin' se convierta a fecha correctamente
+        df['fecha_dt'] = pd.to_datetime(df['timeOrigin'])
+        df['fecha'] = df['fecha_dt'].dt.strftime('%Y-%m-%d')
         
-        # Limpieza de Rutas y Puntos PIR
+        # Ordenar por fecha para asegurar que la semana esté completa
+        df = df.sort_values(by='fecha_dt')
+        
         df['ruta'] = df['tipoTarea'].astype(str).str.split('_').str[0].str.strip().str[:5]
         df['punto_pir'] = df['ruta'].apply(lambda x: next((k for k, v in MAPEO_PIR.items() if any(r in x for r in v)), "Otros"))
         df['tabla'] = df['tabla'].astype(str).replace('None', 'N/A')
         
-        # Selección de columnas finales para el Excel
         cols = ['fecha', 'servbus', 'timeOrigin', 'ruta', 'tabla', 'codigoBus', 'nombre', 'km', 'codigoTm', 'punto_pir']
         df_final = df[cols].rename(columns={'codigoBus': 'bus_prog', 'nombre': 'ope_prog'})
         df_final['servbus'] = df_final['servbus'].astype(str)
 
-        # SOBRESCRIBIR LA HOJA: Google Sheets guardará todos los días del rango
+        # Guardar en Google Sheets
         conn.update(worksheet="PRG_MASTER", data=df_final)
+        
+        # Mostrar en consola de Streamlit cuántos días se cargaron realmente
+        dias_cargados = df_final['fecha'].unique()
+        st.toast(f"Días detectados: {len(dias_cargados)}")
+        
         return True
     except Exception as e:
-        st.error(f"Error técnico en Rigel: {e}")
+        st.error(f"Error técnico: {e}")
         return False
 
 def cargar_datos_pantalla():
-    try:
-        return conn.read(worksheet="PRG_MASTER", ttl=0)
-    except:
-        return pd.DataFrame()
+    try: return conn.read(worksheet="PRG_MASTER", ttl=0)
+    except: return pd.DataFrame()
 
 def registrar_ejecucion_gsheet(datos_gestion, usuario):
     try:
         try: df_ejec = conn.read(worksheet="EJECUCION", ttl=0)
         except: df_ejec = pd.DataFrame(columns=["fecha_ejec", "servbus", "bus_real", "ope_real", "soc", "estado", "gestionado_por"])
-        
-        nueva_fila = pd.DataFrame([{
-            "fecha_ejec": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "servbus": str(datos_gestion['servbus']),
-            "bus_real": datos_gestion['bus_real'],
-            "ope_real": datos_gestion['ope_real'],
-            "soc": datos_gestion['soc'],
-            "estado": datos_gestion['estado'],
-            "gestionado_por": usuario
-        }])
-        
+        nueva_fila = pd.DataFrame([{"fecha_ejec": datetime.now().strftime("%Y-%m-%d %H:%M"), "servbus": str(datos_gestion['servbus']), "bus_real": datos_gestion['bus_real'], "ope_real": datos_gestion['ope_real'], "soc": datos_gestion['soc'], "estado": datos_gestion['estado'], "gestionado_por": usuario}])
         df_f = pd.concat([df_ejec, nueva_fila], ignore_index=True)
         conn.update(worksheet="EJECUCION", data=df_f)
         return True
