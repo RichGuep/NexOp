@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import urllib3
-import json
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -23,75 +22,47 @@ MAPEO_PIR = {
 HEADERS_BYPASS = {"ngrok-skip-browser-warning": "true", "Accept": "application/json"}
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- GESTIÓN DE USUARIOS ---
 def obtener_usuarios():
     try:
         df_user = conn.read(worksheet="USUARIOS", ttl=0)
         if df_user.empty:
-            return {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "admin2026", "rol": "admin"}}
-        
-        # Limpiar correos y crear diccionario
+            return {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "Admin2026", "rol": "admin"}}
         df_user['correo'] = df_user['correo'].str.lower().str.strip()
+        df_user['rol'] = df_user['rol'].str.lower().str.strip()
         users_dict = df_user.set_index('correo').to_dict('index')
-        
-        # FORZAR ADMIN A RICHARD (Llave Maestra)
-        if ADMIN_EMAIL in users_dict:
-            users_dict[ADMIN_EMAIL]['rol'] = 'admin'
-            
+        if ADMIN_EMAIL in users_dict: users_dict[ADMIN_EMAIL]['rol'] = 'admin'
         return users_dict
     except:
-        return {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "admin2026", "rol": "admin"}}
+        return {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "Admin2026", "rol": "admin"}}
 
 def guardar_usuario(correo, nombre, cargo, pw):
     try:
         try: df_actual = conn.read(worksheet="USUARIOS", ttl=0)
         except: df_actual = pd.DataFrame(columns=["correo", "nombre", "cargo", "pw", "rol"])
-        
-        # Validación de cargos para asignar rol (Ignorando tildes/mayúsculas en lo posible)
         admins_keywords = ["Profesional", "Supervisor", "Coordinador"]
         rol_asignado = "admin" if any(keyword in cargo for keyword in admins_keywords) else "user"
-        
-        nuevo = pd.DataFrame([{
-            "correo": correo.lower().strip(),
-            "nombre": nombre,
-            "cargo": cargo,
-            "pw": str(pw),
-            "rol": rol_asignado
-        }])
+        nuevo = pd.DataFrame([{"correo": correo.lower().strip(), "nombre": nombre, "cargo": cargo, "pw": str(pw), "rol": rol_asignado}])
         df_final = pd.concat([df_actual, nuevo], ignore_index=True).drop_duplicates(subset=['correo'], keep='last')
         conn.update(worksheet="USUARIOS", data=df_final)
         return True
     except: return False
 
-# --- GESTIÓN OPERATIVA ---
 def registrar_gestion_viaje(datos, usuario):
     try:
         try: df_hist = conn.read(worksheet="GESTION_OPERATIVA", ttl=0)
         except: df_hist = pd.DataFrame(columns=["fecha_registro", "servbus", "bus_final", "ope_final", "motivo", "eliminar_km", "observaciones", "gestionado_por"])
-        
-        nueva_gest = pd.DataFrame([{
-            "fecha_registro": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "servbus": str(datos['servbus']),
-            "bus_final": datos['bus_final'],
-            "ope_final": datos['ope_final'],
-            "motivo": datos['motivo'],
-            "eliminar_km": datos['eliminar_km'],
-            "observaciones": datos['obs'],
-            "gestionado_por": usuario
-        }])
+        nueva_gest = pd.DataFrame([{"fecha_registro": datetime.now().strftime("%Y-%m-%d %H:%M"), "servbus": str(datos['servbus']), "bus_final": datos['bus_final'], "ope_final": datos['ope_final'], "motivo": datos['motivo'], "eliminar_km": datos['eliminar_km'], "observaciones": datos['obs'], "gestionado_por": usuario}])
         df_f = pd.concat([df_hist, nueva_gest], ignore_index=True)
         conn.update(worksheet="GESTION_OPERATIVA", data=df_f)
         return True
     except: return False
 
-# --- RIGEL (DESCARGA POR DÍAS) ---
 def sincronizar_semana_por_dias(f_ini, f_fin):
     auth_app, data_auth = ('rigelWS', 'rigelWS2021'), {'username': 'nospina', 'password': 'ospina2023', 'grant_type': 'password'}
     try:
         r_t = requests.post(f"{BASE_TUNNEL_URL}/ws/oauth/token", data=data_auth, auth=auth_app, timeout=15, verify=False, headers=HEADERS_BYPASS)
         token = r_t.json().get('access_token')
     except: return False
-    
     f_dt_ini, f_dt_fin = pd.to_datetime(f_ini), pd.to_datetime(f_fin)
     delta = (f_dt_fin - f_dt_ini).days + 1
     lista_total = []
@@ -105,13 +76,16 @@ def sincronizar_semana_por_dias(f_ini, f_fin):
                 df_dia = pd.DataFrame(r.json()); df_dia['fecha'] = fecha_t; lista_total.append(df_dia)
         except: continue
         barra.progress((i + 1) / delta)
-    
     if not lista_total: return False
     df_full = pd.concat(lista_total, ignore_index=True)
     df_full['ruta'] = df_full['tipoTarea'].astype(str).str.split('_').str[0].str.strip().str[:5]
     df_full['punto_pir'] = df_full['ruta'].apply(lambda x: next((k for k, v in MAPEO_PIR.items() if any(r in x for r in v)), "Otros"))
     df_full['tabla'] = df_full['tabla'].astype(str).replace('None', 'N/A')
-    cols = ['fecha', 'servbus', 'timeOrigin', 'ruta', 'tabla', 'codigoBus', 'nombre', 'km', 'codigoTm', 'punto_pir']
+    
+    # NUEVO: Extraer solo la HORA para los filtros de turno
+    df_full['hora_inicio'] = pd.to_datetime(df_full['timeOrigin']).dt.hour
+    
+    cols = ['fecha', 'hora_inicio', 'servbus', 'timeOrigin', 'ruta', 'tabla', 'codigoBus', 'nombre', 'km', 'codigoTm', 'punto_pir']
     df_res = df_full[cols].rename(columns={'codigoBus': 'bus_prog', 'nombre': 'ope_prog'})
     conn.update(worksheet="PRG_MASTER", data=df_res)
     return True
