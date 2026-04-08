@@ -19,7 +19,7 @@ MAPEO_PIR = {
     "Brisas 2": ["L329", "L312", "K324"]
 }
 
-# Clasificación Exacta por Empresa
+# Clasificación de Rutas por Empresa
 RUTAS_ZMO_III = ["H317", "L328", "B326", "H308", "L329", "L312", "K324"]
 
 HEADERS_BYPASS = {"ngrok-skip-browser-warning": "true", "Accept": "application/json"}
@@ -29,8 +29,8 @@ def obtener_usuarios():
     try:
         df = conn.read(worksheet="USUARIOS", ttl=0)
         df.columns = [str(c).lower().strip() for c in df.columns]
-        mapeo = {df.columns[0]: 'correo', df.columns[1]: 'nombre', df.columns[2]: 'cargo', df.columns[3]: 'pw', df.columns[4]: 'rol'}
-        df = df.rename(columns=mapeo)
+        # Mapeo por posición para asegurar acceso
+        df = df.rename(columns={df.columns[0]: 'correo', df.columns[3]: 'pw', df.columns[4]: 'rol'})
         df['correo'] = df['correo'].astype(str).str.lower().str.strip()
         users_dict = df.set_index('correo').to_dict('index')
         if ADMIN_EMAIL in users_dict: users_dict[ADMIN_EMAIL]['rol'] = 'admin'
@@ -48,21 +48,27 @@ def obtener_listado_buses_drive():
 
 def aplicar_gestion_servicio(datos, usuario):
     try:
-        # 1. Historial
+        # 1. Guardar en GESTION_OPERATIVA (Historial con todas las columnas nuevas)
         try: df_hist = conn.read(worksheet="GESTION_OPERATIVA", ttl=0)
         except: df_hist = pd.DataFrame()
-        nueva = pd.DataFrame([{
+        
+        nueva_fila = pd.DataFrame([{
             "fecha_registro": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "servbus": str(datos['servbus']), "bus_original": datos['bus_prog'],
-            "bus_real": datos['bus_real'], "motivo_movil": datos['motivo_movil'],
-            "ope_original": datos['ope_prog'], "ope_real": datos['ope_real'],
-            "motivo_ope": datos['motivo_ope'], "eliminar_km": datos['eliminar_km'],
-            "obs_final": datos['obs_final'], "gestionado_por": usuario
+            "servbus": str(datos['servbus']),
+            "bus_programado": datos['bus_prog'],
+            "bus_real": datos['bus_real'],
+            "motivo_movil": datos['motivo_movil'],
+            "ope_programado": datos['ope_prog'],
+            "ope_real": datos['ope_real'],
+            "motivo_ope": datos['motivo_ope'],
+            "eliminar_km": datos['eliminar_km'],
+            "observacion_final": datos['obs_final'],
+            "gestionado_por": usuario
         }])
-        df_hist_final = pd.concat([df_hist, nueva], ignore_index=True)
+        df_hist_final = pd.concat([df_hist, nueva_fila], ignore_index=True)
         conn.update(worksheet="GESTION_OPERATIVA", data=df_hist_final)
 
-        # 2. Actualizar Maestro
+        # 2. Actualizar PRG_MASTER para reflejar el cambio en tiempo real
         df_master = conn.read(worksheet="PRG_MASTER", ttl=0)
         mask = df_master['servbus'].astype(str) == str(datos['servbus'])
         if mask.any():
@@ -78,16 +84,17 @@ def sincronizar_semana_por_dias(f_ini, f_fin):
     try:
         r_t = requests.post(f"{BASE_TUNNEL_URL}/ws/oauth/token", data=data_auth, auth=auth_app, timeout=15, verify=False, headers=HEADERS_BYPASS)
         token = r_t.json().get('access_token')
-    except: return False, "Error"
+    except: return False, "Error de conexión"
     
     f_dt_ini, f_dt_fin = pd.to_datetime(f_ini), pd.to_datetime(f_fin)
     delta = (f_dt_fin - f_dt_ini).days + 1
     lista_total = []
-    status_placeholder = st.empty()
+    status_p = st.empty()
     barra = st.progress(0)
+    
     for i in range(delta):
         fecha_t = (f_dt_ini + timedelta(days=i)).strftime('%Y-%m-%d')
-        status_placeholder.info(f"⏳ Descargando: {fecha_t}...")
+        status_p.info(f"⏳ Descargando: {fecha_t}...")
         url = f"{BASE_TUNNEL_URL}/ws/reportes/semanaActual/{fecha_t}/{fecha_t}/0"
         try:
             r = requests.get(url, headers={**HEADERS_BYPASS, 'Authorization': f'Bearer {token}'}, timeout=30, verify=False)
@@ -106,7 +113,7 @@ def sincronizar_semana_por_dias(f_ini, f_fin):
     cols = ['fecha', 'servbus', 'timeOrigin', 'ruta', 'tabla', 'codigoBus', 'nombre', 'km', 'codigoTm', 'punto_pir', 'empresa']
     df_res = df_full[cols].rename(columns={'codigoBus': 'bus_prog', 'nombre': 'ope_prog'})
     conn.update(worksheet="PRG_MASTER", data=df_res)
-    return True, "Éxito"
+    return True, "Sincronización Exitosa"
 
 def cargar_datos_pantalla():
     try:
