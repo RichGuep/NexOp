@@ -21,7 +21,7 @@ MAPEO_PIR = {
 }
 
 # Clasificación EXACTA según imagen image_0396ca.png
-RUTAS_ZMO_III = ["H317", "L328", "KB326", "H308", "L329", "L312", "KA324"]
+RUTAS_ZMO_III = ["H317", "L328", "KB326", "H308", "L329", "L312", "KA324","A003","A332"]
 RUTAS_ZMO_V = ["G311", "H327", "KA332", "L331", "B314", "H318", "L325"]
 
 HEADERS_BYPASS = {"ngrok-skip-browser-warning": "true", "Accept": "application/json"}
