@@ -4,6 +4,9 @@ import plotly.express as px
 from datetime import datetime, timedelta
 import processor
 
+# DEFINIR ADMIN_EMAIL TAMBIÉN AQUÍ PARA EVITAR EL NAMEERROR
+ADMIN_EMAIL = "richard.guevara@greenmovil.com.co"
+
 st.set_page_config(page_title="NexOp | Green Móvil", layout="wide", page_icon="⚡")
 
 # --- ESTILO ---
@@ -46,7 +49,6 @@ def ventana_gestion(viaje):
     concesion = viaje.get('concesion', 'ZMO V')
     prefijo = "Z63-" if concesion == "ZMO III" else "Z67-"
     
-    # Filtrar buses disponibles por prefijo
     if not df_buses_raw.empty:
         df_filtrado = df_buses_raw[df_buses_raw['Código'].astype(str).str.startswith(prefijo)]
         lista_opciones = ["N/A"] + df_filtrado['label'].tolist()
@@ -94,12 +96,9 @@ tabs = st.tabs(["📊 ESTADÍSTICAS", "🚀 GESTIÓN PIR", "📋 SEGUIMIENTO", "
 
 if df is not None and not df.empty:
     st.sidebar.subheader("🔍 Filtros de Operación")
-    
-    # 1. Filtro Fecha
     f_sel = st.sidebar.selectbox("📅 Día Operativo:", sorted(df['fecha'].unique().tolist()))
     df_f = df[df['fecha'] == f_sel].copy()
 
-    # 2. Filtro Turno (Usando timeOrigin)
     df_f['temp_hora'] = pd.to_datetime(df_f['timeOrigin']).dt.hour
     turno = st.sidebar.radio("⏱️ Turno:", ["Completo", "Mañana (06:00 - 14:00)", "Tarde (14:00 - 22:00)"])
     if "Mañana" in turno:
@@ -107,7 +106,6 @@ if df is not None and not df.empty:
     elif "Tarde" in turno:
         df_f = df_f[(df_f['temp_hora'] >= 14) & (df_f['temp_hora'] < 22)]
 
-    # 3. PIR, Ruta y Buscador
     p_sel = st.sidebar.selectbox("🏠 Punto PIR:", ["Todos"] + list(processor.MAPEO_PIR.keys()))
     if p_sel != "Todos": df_f = df_f[df_f['punto_pir'] == p_sel]
     
@@ -118,18 +116,16 @@ if df is not None and not df.empty:
     if search:
         df_f = df_f[df_f['bus_prog'].astype(str).str.contains(search) | df_f['ope_prog'].astype(str).str.contains(search)]
 
-    # --- PESTAÑAS ---
-    with tabs[0]: # DASHBOARD
+    with tabs[0]:
         m1, m2, m3 = st.columns(3)
         m1.metric("Servicios", len(df_f)); m2.metric("Buses", len(df_f['bus_prog'].unique())); m3.metric("Rutas", len(df_f['ruta'].unique()))
         st.plotly_chart(px.bar(df_f.groupby('ruta').size().reset_index(name='Cant'), x='ruta', y='Cant', color_discrete_sequence=['#1a531f']), use_container_width=True)
 
-    with tabs[1]: # GESTIÓN PIR
-        st.info(f"Consola PIR - {turno}")
+    with tabs[1]:
         sel = st.dataframe(df_f[['timeOrigin', 'ruta', 'tabla', 'bus_prog', 'ope_prog', 'concesion', 'servbus']], use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
         if sel.selection.rows: ventana_gestion(df_f.iloc[sel.selection.rows[0]])
 
-    with tabs[2]: # SEGUIMIENTO
+    with tabs[2]:
         st.dataframe(df_f.drop(columns=['temp_hora']), use_container_width=True, hide_index=True)
 
 if is_admin:
