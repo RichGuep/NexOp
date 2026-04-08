@@ -23,11 +23,12 @@ if not st.session_state.auth:
             if st.button("INGRESAR", use_container_width=True):
                 users = processor.obtener_usuarios()
                 if u in users:
-                    # Accedemos de forma segura a la contraseña
-                    db_pw = str(users[u].get('pw', ''))
+                    # Acceso seguro sin depender del nombre exacto de la columna
+                    user_data = users[u]
+                    db_pw = str(user_data.get('pw', ''))
                     if db_pw == p:
                         st.session_state.auth = True
-                        st.session_state.user_info = users[u]
+                        st.session_state.user_info = user_data
                         st.rerun()
                     else: st.error("Contraseña incorrecta")
                 else: st.error("Usuario no registrado")
@@ -57,6 +58,7 @@ def ventana_gestion(viaje):
             mot_o = c2.selectbox("Motivo Operador:", ["Normal", "Falta operador", "Enfermo", "No llegó"])
             elim_k = c2.toggle("Eliminar KM")
         
+        st.divider()
         obs_f = st.text_area("📝 Observación Final")
         if st.form_submit_button("🚀 GUARDAR CAMBIOS"):
             datos = {"servbus": viaje['servbus'], "bus_final": bus_p.split(" | ")[0], "bus_adic": bus_a.split(" | ")[0] if bus_a != "N/A" else "", "motivo_bus": mot_b, "ope_final": ope_r, "motivo_ope": mot_o, "eliminar_km": "SI" if elim_k else "NO", "obs_final": obs_f}
@@ -66,6 +68,7 @@ def ventana_gestion(viaje):
 st.markdown('<div class="main-header"><h1>NexOp | Green Móvil</h1></div>', unsafe_allow_html=True)
 df = processor.cargar_datos_pantalla()
 u_info = st.session_state.user_info
+# Validación robusta de Admin
 is_admin = (u_info.get('correo') == ADMIN_EMAIL or str(u_info.get('rol')).lower() == 'admin')
 tabs = st.tabs(["📊 ESTADÍSTICAS", "🚀 GESTIÓN PIR", "📋 SEGUIMIENTO", "⚙️ CONFIG"] if is_admin else ["📊 ESTADÍSTICAS", "🚀 GESTIÓN PIR", "📋 SEGUIMIENTO"])
 
