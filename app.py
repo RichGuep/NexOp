@@ -6,7 +6,7 @@ import processor
 
 st.set_page_config(page_title="NexOp | Green Móvil", layout="wide", page_icon="⚡")
 
-# --- ESTILO ---
+# --- ESTILO CORPORATIVO ---
 st.markdown("""
     <style>
     @import url('https://fonts.cdnfonts.com/css/century-gothic');
@@ -39,10 +39,10 @@ if not st.session_state.auth:
                     st.session_state.auth = True
                     st.session_state.user_info = users[user_key]
                     st.rerun()
-                else: st.error("Acceso Denegado. Verifique correo y clave.")
+                else: st.error("Acceso Denegado")
     st.stop()
 
-# --- POP-UP GESTIÓN ---
+# --- VENTANA EMERGENTE (POP-UP) ---
 @st.dialog("🛠️ Gestión de Contingencia")
 def ventana_gestion(viaje):
     st.markdown(f"**Servicio:** `{viaje['servbus']}` | **Tabla:** {viaje['tabla']}")
@@ -57,34 +57,38 @@ def ventana_gestion(viaje):
             if processor.registrar_gestion_viaje({"servbus": viaje['servbus'], "bus_final": bus_r, "ope_final": ope_r, "motivo": motivo, "eliminar_km": "SÍ" if elim_km else "NO", "obs": obs}, st.session_state.user_info['nombre']):
                 st.success("¡Registrado!"); st.rerun()
 
+# --- DETECCIÓN DE ROL FORZADA ---
+user_info = st.session_state.user_info
+# LLAVE MAESTRA: Si es Richard, el rol es 'admin' pase lo que pase
+if user_info.get('correo', '').lower().strip() == "richard.guevara@greenmovil.com.co":
+    user_rol = "admin"
+else:
+    user_rol = user_info.get('rol', 'user')
+
 # --- APP LAYOUT ---
 st.markdown('<div class="main-header"><h1>NexOp | Green Móvil</h1></div>', unsafe_allow_html=True)
-st.sidebar.markdown(f"👤 **{st.session_state.user_info['nombre']}**")
-st.sidebar.caption(f"Cargo: {st.session_state.user_info['cargo']}")
+st.sidebar.markdown(f"👤 **{user_info['nombre']}**")
+st.sidebar.caption(f"Cargo: {user_info['cargo']}")
 
-# Filtros Globales
-df = processor.cargar_datos_pantalla()
-user_rol = st.session_state.user_info.get('rol', 'user')
-
-# Definir pestañas según ROL
+# Definir Pestañas
 lista_tabs = ["📊 ESTADÍSTICAS", "🚀 GESTIÓN PIR", "📋 SEGUIMIENTO"]
-if user_rol == "admin": lista_tabs.append("⚙️ CONFIG")
+if user_rol == "admin":
+    lista_tabs.append("⚙️ CONFIG")
+
 tabs = st.tabs(lista_tabs)
+df = processor.cargar_datos_pantalla()
 
 if df is not None and not df.empty and 'fecha' in df.columns:
     st.sidebar.divider()
     f_list = sorted(df['fecha'].unique().tolist())
     f_sel = st.sidebar.selectbox("📅 Día Operativo:", f_list)
     p_sel = st.sidebar.selectbox("🏠 Punto PIR:", ["Todas"] + list(processor.MAPEO_PIR.keys()))
-    
     df_f = df[df['fecha'] == f_sel].copy()
     if p_sel != "Todas": df_f = df_f[df_f['punto_pir'] == p_sel]
 
-    with tabs[0]: # DASHBOARD
+    with tabs[0]: # ESTADISTICAS
         m1, m2, m3 = st.columns(3)
-        m1.metric("Servicios", len(df_f))
-        m2.metric("Rutas", len(df_f['ruta'].unique()))
-        m3.metric("Tablas", len(df_f['tabla'].unique()))
+        m1.metric("Servicios", len(df_f)); m2.metric("Rutas", len(df_f['ruta'].unique())); m3.metric("Tablas", len(df_f['tabla'].unique()))
         st.plotly_chart(px.bar(df_f.groupby('ruta').size().reset_index(name='Cant'), x='ruta', y='Cant', color_discrete_sequence=['#1a531f']), use_container_width=True)
 
     with tabs[1]: # PIR
@@ -94,23 +98,19 @@ if df is not None and not df.empty and 'fecha' in df.columns:
 
     with tabs[2]: # SEGUIMIENTO
         st.dataframe(df_f, use_container_width=True, hide_index=True)
-
 else:
-    for i in range(len(tabs)):
-        if i < 3: # Solo las primeras 3 pestañas muestran el error de datos
-            with tabs[i]: st.warning("⚠️ No hay programación cargada en el sistema.")
+    for i in range(len(lista_tabs)-1):
+        with tabs[i]: st.warning("⚠️ No hay datos cargados. Por favor sincronice en CONFIG.")
 
-# PESTAÑA CONFIG (SOLO ADMINS)
+# PESTAÑA CONFIG (SOLO PARA ADMINS)
 if user_rol == "admin":
     with tabs[-1]:
         st.subheader("Administración de Sistema")
         with st.expander("🚀 Sincronizar Rigel (Semanal)"):
             c1, c2 = st.columns(2)
-            fi, ff = c1.date_input("Inicio"), c2.date_input("Fin")
-            if st.button("DESCARGAR SEMANA"):
-                if processor.sincronizar_semana_por_dias(str(fi), str(ff)):
-                    st.success("¡Hecho!"); st.rerun()
-        
+            if st.button("DESCARGAR"):
+                if processor.sincronizar_semana_por_dias(str(c1.date_input("Inicio")), str(c2.date_input("Fin"))):
+                    st.success("Sincronizado"); st.rerun()
         st.divider()
         with st.expander("👥 Registro de Personal", expanded=True):
             with st.form("reg_u", clear_on_submit=True):
@@ -118,7 +118,7 @@ if user_rol == "admin":
                 nom, cor = n1.text_input("Nombre"), n2.text_input("Correo")
                 car = st.selectbox("Cargo:", ["Auxiliar de Ejecución de la operación", "Tecnico de ejecución de la operación", "Profesional de Ejecución de la Operacion", "Supervisor Logistico", "Coordinador de Ejecución de la operación"])
                 pas = st.text_input("Clave")
-                if st.form_submit_button("REGISTRAR USUARIO"):
+                if st.form_submit_button("REGISTRAR"):
                     if processor.guardar_usuario(cor, nom, car, pas):
                         st.success("Usuario Guardado"); st.rerun()
 
