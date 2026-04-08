@@ -30,10 +30,11 @@ def obtener_usuarios():
         if df_user.empty:
             return {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "admin2026", "rol": "admin"}}
         
-        # Convertir a diccionario
+        # Limpiar correos y crear diccionario
+        df_user['correo'] = df_user['correo'].str.lower().str.strip()
         users_dict = df_user.set_index('correo').to_dict('index')
         
-        # SUPER-ADMIN FORZADO: Asegura que Richard siempre sea admin
+        # FORZAR ADMIN A RICHARD (Llave Maestra)
         if ADMIN_EMAIL in users_dict:
             users_dict[ADMIN_EMAIL]['rol'] = 'admin'
             
@@ -46,8 +47,9 @@ def guardar_usuario(correo, nombre, cargo, pw):
         try: df_actual = conn.read(worksheet="USUARIOS", ttl=0)
         except: df_actual = pd.DataFrame(columns=["correo", "nombre", "cargo", "pw", "rol"])
         
-        admins = ["Profesional de Ejecución de la Operacion", "Supervisor Logistico", "Coordinador de Ejecución de la operación"]
-        rol_asignado = "admin" if cargo in admins else "user"
+        # Validación de cargos para asignar rol (Ignorando tildes/mayúsculas en lo posible)
+        admins_keywords = ["Profesional", "Supervisor", "Coordinador"]
+        rol_asignado = "admin" if any(keyword in cargo for keyword in admins_keywords) else "user"
         
         nuevo = pd.DataFrame([{
             "correo": correo.lower().strip(),
@@ -82,7 +84,7 @@ def registrar_gestion_viaje(datos, usuario):
         return True
     except: return False
 
-# --- RIGEL ---
+# --- RIGEL (DESCARGA POR DÍAS) ---
 def sincronizar_semana_por_dias(f_ini, f_fin):
     auth_app, data_auth = ('rigelWS', 'rigelWS2021'), {'username': 'nospina', 'password': 'ospina2023', 'grant_type': 'password'}
     try:
@@ -100,9 +102,7 @@ def sincronizar_semana_por_dias(f_ini, f_fin):
         try:
             r = requests.get(url, headers={**HEADERS_BYPASS, 'Authorization': f'Bearer {token}'}, timeout=30, verify=False)
             if r.status_code == 200 and r.json():
-                df_dia = pd.DataFrame(r.json())
-                df_dia['fecha'] = fecha_t
-                lista_total.append(df_dia)
+                df_dia = pd.DataFrame(r.json()); df_dia['fecha'] = fecha_t; lista_total.append(df_dia)
         except: continue
         barra.progress((i + 1) / delta)
     
