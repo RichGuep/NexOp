@@ -25,11 +25,9 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def obtener_usuarios():
     try:
         df_user = conn.read(worksheet="USUARIOS", ttl=0)
-        if df_user.empty:
-            return {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Coordinador", "pw": "Admin2026", "rol": "admin"}}
         df_user['correo'] = df_user['correo'].str.lower().str.strip()
-        df_user['rol'] = df_user['rol'].str.lower().str.strip()
         users_dict = df_user.set_index('correo').to_dict('index')
+        # Llave maestra para Richard
         if ADMIN_EMAIL in users_dict: users_dict[ADMIN_EMAIL]['rol'] = 'admin'
         return users_dict
     except:
@@ -37,10 +35,9 @@ def obtener_usuarios():
 
 def guardar_usuario(correo, nombre, cargo, pw):
     try:
-        try: df_actual = conn.read(worksheet="USUARIOS", ttl=0)
-        except: df_actual = pd.DataFrame(columns=["correo", "nombre", "cargo", "pw", "rol"])
+        df_actual = conn.read(worksheet="USUARIOS", ttl=0)
         admins_keywords = ["Profesional", "Supervisor", "Coordinador"]
-        rol_asignado = "admin" if any(keyword in cargo for keyword in admins_keywords) else "user"
+        rol_asignado = "admin" if any(kw in cargo for kw in admins_keywords) else "user"
         nuevo = pd.DataFrame([{"correo": correo.lower().strip(), "nombre": nombre, "cargo": cargo, "pw": str(pw), "rol": rol_asignado}])
         df_final = pd.concat([df_actual, nuevo], ignore_index=True).drop_duplicates(subset=['correo'], keep='last')
         conn.update(worksheet="USUARIOS", data=df_final)
@@ -63,6 +60,7 @@ def sincronizar_semana_por_dias(f_ini, f_fin):
         r_t = requests.post(f"{BASE_TUNNEL_URL}/ws/oauth/token", data=data_auth, auth=auth_app, timeout=15, verify=False, headers=HEADERS_BYPASS)
         token = r_t.json().get('access_token')
     except: return False
+    
     f_dt_ini, f_dt_fin = pd.to_datetime(f_ini), pd.to_datetime(f_fin)
     delta = (f_dt_fin - f_dt_ini).days + 1
     lista_total = []
@@ -76,16 +74,15 @@ def sincronizar_semana_por_dias(f_ini, f_fin):
                 df_dia = pd.DataFrame(r.json()); df_dia['fecha'] = fecha_t; lista_total.append(df_dia)
         except: continue
         barra.progress((i + 1) / delta)
+    
     if not lista_total: return False
     df_full = pd.concat(lista_total, ignore_index=True)
     df_full['ruta'] = df_full['tipoTarea'].astype(str).str.split('_').str[0].str.strip().str[:5]
     df_full['punto_pir'] = df_full['ruta'].apply(lambda x: next((k for k, v in MAPEO_PIR.items() if any(r in x for r in v)), "Otros"))
     df_full['tabla'] = df_full['tabla'].astype(str).replace('None', 'N/A')
     
-    # NUEVO: Extraer solo la HORA para los filtros de turno
-    df_full['hora_inicio'] = pd.to_datetime(df_full['timeOrigin']).dt.hour
-    
-    cols = ['fecha', 'hora_inicio', 'servbus', 'timeOrigin', 'ruta', 'tabla', 'codigoBus', 'nombre', 'km', 'codigoTm', 'punto_pir']
+    # Mantenemos las columnas originales para el Drive
+    cols = ['fecha', 'servbus', 'timeOrigin', 'ruta', 'tabla', 'codigoBus', 'nombre', 'km', 'codigoTm', 'punto_pir']
     df_res = df_full[cols].rename(columns={'codigoBus': 'bus_prog', 'nombre': 'ope_prog'})
     conn.update(worksheet="PRG_MASTER", data=df_res)
     return True
