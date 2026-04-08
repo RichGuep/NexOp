@@ -7,16 +7,14 @@ import urllib3
 import json
 import os
 
-# Desactivar advertencias de certificados SSL
+# Desactivar advertencias SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- CONFIGURACIÓN ---
-# Esta URL debe coincidir con la de tu terminal de Ngrok activa
 BASE_TUNNEL_URL = "https://cotemporaneous-lory-semitruthfully.ngrok-free.dev"
 USERS_FILE = "usuarios.json"
 ADMIN_EMAIL = "richard.guevara@greenmovil.com.co"
 
-# Mapeo de rutas a Puntos PIR
 MAPEO_PIR = {
     "Puerta de Teja": ["H317", "L328", "B326"],
     "Puente Grande": ["G311", "H308", "H327"],
@@ -25,26 +23,23 @@ MAPEO_PIR = {
     "Brisas 2": ["L329", "L312", "K324"]
 }
 
-# Header para saltar la advertencia de Ngrok
 HEADERS_BYPASS = {
     "ngrok-skip-browser-warning": "true",
     "Accept": "application/json"
 }
 
-# Conexión a Google Sheets usando st.connection
+# Conexión oficial con Service Account (Configurada en Secrets)
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def inicializar_gsheet():
-    """Valida la conexión inicial con el Excel."""
     try:
         conn.read(worksheet="PRG_MASTER", ttl=0)
     except:
         pass
 
 def inicializar_sistema():
-    """Crea el archivo de usuarios local."""
     if not os.path.exists(USERS_FILE):
-        db_inicial = {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Administrador de Operaciones", "pw": "admin2026", "rol": "admin"}}
+        db_inicial = {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Administrador", "pw": "admin2026"}}
         with open(USERS_FILE, 'w') as f: json.dump(db_inicial, f, indent=4)
 
 def obtener_usuarios():
@@ -57,68 +52,57 @@ def guardar_usuario(correo, nombre, cargo, pw):
     with open(USERS_FILE, 'w') as f: json.dump(db, f, indent=4)
 
 def obtener_token():
-    """Solicita el token a Rigel."""
     auth_app = ('rigelWS', 'rigelWS2021')
     data_auth = {'username': 'nospina', 'password': 'ospina2023', 'grant_type': 'password'}
     try:
         url = f"{BASE_TUNNEL_URL}/ws/oauth/token"
         r = requests.post(url, data=data_auth, auth=auth_app, timeout=15, verify=False, headers=HEADERS_BYPASS)
-        if r.status_code == 200:
-            return r.json().get('access_token')
-        return None
-    except:
-        return None
+        return r.json().get('access_token') if r.status_code == 200 else None
+    except: return None
 
 def sincronizar_rango_rigel(f_ini, f_fin):
-    """Descarga de Rigel y guarda en Google Sheets."""
+    """Descarga la semana completa y extrae la fecha de cada servicio."""
     token = obtener_token()
-    if not token:
-        st.error("No se pudo obtener el Token de Rigel. Revisa VPN y Ngrok.")
-        return False
+    if not token: return False
     
     url = f"{BASE_TUNNEL_URL}/ws/reportes/semanaActual/{f_ini}/{f_fin}/0"
-    headers_final = {**HEADERS_BYPASS, 'Authorization': f'Bearer {token}'}
+    headers_f = {**HEADERS_BYPASS, 'Authorization': f'Bearer {token}'}
     
     try:
-        r = requests.get(url, headers=headers_final, timeout=60, verify=False)
+        r = requests.get(url, headers=headers_f, timeout=60, verify=False)
         raw = r.json()
-        if not raw:
-            st.warning("Rigel no devolvió datos para este rango.")
-            return False
+        if not raw: return False
         
-        df_nuevo = pd.DataFrame(raw)
+        df = pd.DataFrame(raw)
         
-        # Procesamiento de columnas
-        df_nuevo['ruta'] = df_nuevo['tipoTarea'].astype(str).str.split('_').str[0].str.strip().str[:5]
-        df_nuevo['punto_pir'] = df_nuevo['ruta'].apply(lambda x: next((k for k, v in MAPEO_PIR.items() if any(r in x for r in v)), "Otros"))
-        df_nuevo['tabla'] = df_nuevo['tabla'].astype(str).replace('None', 'N/A')
+        # --- PROCESAMIENTO DE FECHAS Y RUTAS ---
+        # Extraemos la fecha (AAAA-MM-DD) del campo timeOrigin
+        df['fecha'] = pd.to_datetime(df['timeOrigin']).dt.strftime('%Y-%m-%d')
+        df['ruta'] = df['tipoTarea'].astype(str).str.split('_').str[0].str.strip().str[:5]
+        df['punto_pir'] = df['ruta'].apply(lambda x: next((k for k, v in MAPEO_PIR.items() if any(r in x for r in v)), "Otros"))
+        df['tabla'] = df['tabla'].astype(str).replace('None', 'N/A')
         
-        cols_finales = ['servbus', 'timeOrigin', 'ruta', 'tabla', 'codigoBus', 'nombre', 'km', 'codigoTm', 'punto_pir']
-        df_final = df_nuevo[cols_finales].rename(columns={'codigoBus': 'bus_prog', 'nombre': 'ope_prog'})
+        cols = ['fecha', 'servbus', 'timeOrigin', 'ruta', 'tabla', 'codigoBus', 'nombre', 'km', 'codigoTm', 'punto_pir']
+        df_final = df[cols].rename(columns={'codigoBus': 'bus_prog', 'nombre': 'ope_prog'})
         df_final['servbus'] = df_final['servbus'].astype(str)
 
-        # Escritura en Google Sheets
-        # El comando 'update' con st.connection requiere permisos de edición correctos
+        # Guardar en Google Sheets (Sobrescribe con la nueva semana)
         conn.update(worksheet="PRG_MASTER", data=df_final)
         return True
     except Exception as e:
-        st.error(f"Error técnico durante la sincronización: {e}")
+        st.error(f"Error técnico: {e}")
         return False
 
 def cargar_datos_pantalla():
-    """Lee la programación de Google Sheets."""
     try:
         return conn.read(worksheet="PRG_MASTER", ttl=0)
     except:
         return pd.DataFrame()
 
 def registrar_ejecucion_gsheet(datos_gestion, usuario):
-    """Guarda novedades en la hoja EJECUCION."""
     try:
-        try:
-            df_ejec = conn.read(worksheet="EJECUCION", ttl=0)
-        except:
-            df_ejec = pd.DataFrame(columns=["fecha_ejec", "servbus", "bus_real", "ope_real", "soc", "estado", "gestionado_por"])
+        try: df_ejec = conn.read(worksheet="EJECUCION", ttl=0)
+        except: df_ejec = pd.DataFrame(columns=["fecha_ejec", "servbus", "bus_real", "ope_real", "soc", "estado", "gestionado_por"])
         
         nueva_fila = pd.DataFrame([{
             "fecha_ejec": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -130,9 +114,9 @@ def registrar_ejecucion_gsheet(datos_gestion, usuario):
             "gestionado_por": usuario
         }])
         
-        df_final = pd.concat([df_ejec, nueva_fila], ignore_index=True)
-        conn.update(worksheet="EJECUCION", data=df_final)
+        df_f = pd.concat([df_ejec, nueva_fila], ignore_index=True)
+        conn.update(worksheet="EJECUCION", data=df_f)
         return True
     except Exception as e:
-        st.error(f"Error al guardar ejecución: {e}")
+        st.error(f"Error al guardar: {e}")
         return False
