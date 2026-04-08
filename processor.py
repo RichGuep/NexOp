@@ -5,9 +5,7 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import urllib3
 import json
-import os
 
-# Desactivar advertencias SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- CONFIGURACIÓN ---
@@ -25,8 +23,7 @@ MAPEO_PIR = {
 HEADERS_BYPASS = {"ngrok-skip-browser-warning": "true", "Accept": "application/json"}
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- GESTIÓN DE USUARIOS ---
-
+# --- GESTIÓN DE USUARIOS Y ROLES ---
 def obtener_usuarios():
     try:
         df_user = conn.read(worksheet="USUARIOS", ttl=0)
@@ -38,49 +35,48 @@ def obtener_usuarios():
 
 def guardar_usuario(correo, nombre, cargo, pw):
     try:
-        try:
-            df_actual = conn.read(worksheet="USUARIOS", ttl=0)
-        except:
-            df_actual = pd.DataFrame(columns=["correo", "nombre", "cargo", "pw", "rol"])
-        
-        # Definición de Roles según Cargo
-        admins = [
-            "Profesional de Ejecución de la Operacion",
-            "Supervisor Logistico",
-            "Coordinador de Ejecución de la operación"
-        ]
+        df_actual = conn.read(worksheet="USUARIOS", ttl=0)
+        admins = ["Profesional de Ejecución de la Operacion", "Supervisor Logistico", "Coordinador de Ejecución de la operación"]
         rol_asignado = "admin" if cargo in admins else "user"
-        
-        nuevo = pd.DataFrame([{
-            "correo": correo.lower().strip(),
-            "nombre": nombre,
-            "cargo": cargo,
-            "pw": str(pw),
-            "rol": rol_asignado
-        }])
-        
+        nuevo = pd.DataFrame([{"correo": correo.lower().strip(), "nombre": nombre, "cargo": cargo, "pw": str(pw), "rol": rol_asignado}])
         df_final = pd.concat([df_actual, nuevo], ignore_index=True).drop_duplicates(subset=['correo'], keep='last')
         conn.update(worksheet="USUARIOS", data=df_final)
         return True
-    except:
-        return False
+    except: return False
 
-# --- GESTIÓN DE RIGEL ---
+# --- GESTIÓN OPERATIVA (LOG DE CAMBIOS) ---
+def registrar_gestion_viaje(datos, usuario):
+    try:
+        try: df_hist = conn.read(worksheet="GESTION_OPERATIVA", ttl=0)
+        except: df_hist = pd.DataFrame(columns=["fecha_registro", "servbus", "bus_final", "ope_final", "motivo", "eliminar_km", "observaciones", "gestionado_por"])
+        
+        nueva_gest = pd.DataFrame([{
+            "fecha_registro": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "servbus": str(datos['servbus']),
+            "bus_final": datos['bus_final'],
+            "ope_final": datos['ope_final'],
+            "motivo": datos['motivo'],
+            "eliminar_km": datos['eliminar_km'],
+            "observaciones": datos['obs'],
+            "gestionado_por": usuario
+        }])
+        df_f = pd.concat([df_hist, nueva_gest], ignore_index=True)
+        conn.update(worksheet="GESTION_OPERATIVA", data=df_f)
+        return True
+    except: return False
 
+# --- SINCRONIZACIÓN RIGEL ---
 def sincronizar_semana_por_dias(f_ini, f_fin):
-    # Obtener Token
-    auth_app = ('rigelWS', 'rigelWS2021')
-    data_auth = {'username': 'nospina', 'password': 'ospina2023', 'grant_type': 'password'}
+    auth_app, data_auth = ('rigelWS', 'rigelWS2021'), {'username': 'nospina', 'password': 'ospina2023', 'grant_type': 'password'}
     try:
         r_t = requests.post(f"{BASE_TUNNEL_URL}/ws/oauth/token", data=data_auth, auth=auth_app, timeout=15, verify=False, headers=HEADERS_BYPASS)
         token = r_t.json().get('access_token')
     except: return False
-
+    
     f_dt_ini, f_dt_fin = pd.to_datetime(f_ini), pd.to_datetime(f_fin)
     delta = (f_dt_fin - f_dt_ini).days + 1
     lista_total = []
     barra = st.progress(0)
-    
     for i in range(delta):
         fecha_t = (f_dt_ini + timedelta(days=i)).strftime('%Y-%m-%d')
         url = f"{BASE_TUNNEL_URL}/ws/reportes/semanaActual/{fecha_t}/{fecha_t}/0"
@@ -92,18 +88,15 @@ def sincronizar_semana_por_dias(f_ini, f_fin):
                 lista_total.append(df_dia)
         except: continue
         barra.progress((i + 1) / delta)
-
-    if not lista_total: return False
     
+    if not lista_total: return False
     df_full = pd.concat(lista_total, ignore_index=True)
     df_full['ruta'] = df_full['tipoTarea'].astype(str).str.split('_').str[0].str.strip().str[:5]
     df_full['punto_pir'] = df_full['ruta'].apply(lambda x: next((k for k, v in MAPEO_PIR.items() if any(r in x for r in v)), "Otros"))
     df_full['tabla'] = df_full['tabla'].astype(str).replace('None', 'N/A')
-    
     cols = ['fecha', 'servbus', 'timeOrigin', 'ruta', 'tabla', 'codigoBus', 'nombre', 'km', 'codigoTm', 'punto_pir']
-    df_final = df_full[cols].rename(columns={'codigoBus': 'bus_prog', 'nombre': 'ope_prog'})
-    
-    conn.update(worksheet="PRG_MASTER", data=df_final)
+    df_res = df_full[cols].rename(columns={'codigoBus': 'bus_prog', 'nombre': 'ope_prog'})
+    conn.update(worksheet="PRG_MASTER", data=df_res)
     return True
 
 def cargar_datos_pantalla():
