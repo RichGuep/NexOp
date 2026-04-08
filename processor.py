@@ -23,20 +23,17 @@ MAPEO_PIR = {
 HEADERS_BYPASS = {"ngrok-skip-browser-warning": "true", "Accept": "application/json"}
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- GESTIÓN DE USUARIOS EN GOOGLE SHEETS ---
-
 def obtener_usuarios():
-    """Lee los usuarios directamente desde la pestaña USUARIOS del Drive."""
+    """Lee usuarios. Si falla o está vacío, devuelve el admin maestro."""
     try:
         df_user = conn.read(worksheet="USUARIOS", ttl=0)
-        # Convertimos el DataFrame a un diccionario para el login
+        if df_user.empty:
+            return {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Admin", "pw": "admin2026", "rol": "admin"}}
         return df_user.set_index('correo').to_dict('index')
     except:
-        # Si la pestaña está vacía, devolvemos al admin por defecto
         return {ADMIN_EMAIL: {"nombre": "Richard Guevara", "cargo": "Admin", "pw": "admin2026", "rol": "admin"}}
 
 def guardar_usuario(correo, nombre, cargo, pw):
-    """Agrega un nuevo usuario a la pestaña USUARIOS en el Drive."""
     try:
         try:
             df_actual = conn.read(worksheet="USUARIOS", ttl=0)
@@ -55,25 +52,14 @@ def guardar_usuario(correo, nombre, cargo, pw):
         conn.update(worksheet="USUARIOS", data=df_final)
         return True
     except Exception as e:
-        st.error(f"Error al guardar usuario: {e}")
+        st.error(f"Error al guardar: {e}")
         return False
 
-# --- GESTIÓN DE DATOS RIGEL ---
-
-def obtener_token():
-    auth_app = ('rigelWS', 'rigelWS2021')
-    data_auth = {'username': 'nospina', 'password': 'ospina2023', 'grant_type': 'password'}
-    try:
-        url = f"{BASE_TUNNEL_URL}/ws/oauth/token"
-        r = requests.post(url, data=data_auth, auth=auth_app, timeout=15, verify=False, headers=HEADERS_BYPASS)
-        return r.json().get('access_token') if r.status_code == 200 else None
-    except: return None
-
 def sincronizar_semana_por_dias(f_ini, f_fin):
+    # (Lógica de Rigel que ya funciona perfectamente)
     token = obtener_token()
     if not token: return False
-    f_dt_ini = pd.to_datetime(f_ini)
-    f_dt_fin = pd.to_datetime(f_fin)
+    f_dt_ini, f_dt_fin = pd.to_datetime(f_ini), pd.to_datetime(f_fin)
     delta = (f_dt_fin - f_dt_ini).days + 1
     lista_total = []
     barra = st.progress(0)
@@ -98,6 +84,15 @@ def sincronizar_semana_por_dias(f_ini, f_fin):
     df_final = df_full[cols].rename(columns={'codigoBus': 'bus_prog', 'nombre': 'ope_prog'})
     conn.update(worksheet="PRG_MASTER", data=df_final)
     return True
+
+def obtener_token():
+    auth_app = ('rigelWS', 'rigelWS2021')
+    data_auth = {'username': 'nospina', 'password': 'ospina2023', 'grant_type': 'password'}
+    try:
+        url = f"{BASE_TUNNEL_URL}/ws/oauth/token"
+        r = requests.post(url, data=data_auth, auth=auth_app, timeout=15, verify=False, headers=HEADERS_BYPASS)
+        return r.json().get('access_token') if r.status_code == 200 else None
+    except: return None
 
 def cargar_datos_pantalla():
     try: return conn.read(worksheet="PRG_MASTER", ttl=0)
